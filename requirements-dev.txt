@@ -1,0 +1,5 @@
+# Only for local development; AstrBot supplies its own SDK in production.
+astrbot==4.29.1
+pytest==8.4.2
+pytest-asyncio==1.4.0
+ruff==0.15.22

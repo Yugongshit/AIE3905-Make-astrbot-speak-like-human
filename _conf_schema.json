@@ -1,0 +1,30 @@
+{
+  "enabled": {
+    "description": "启用自然表达与学习模块",
+    "type": "bool",
+    "default": true
+  },
+  "group_only": {
+    "description": "仅在群聊中生效",
+    "type": "bool",
+    "default": true
+  },
+  "enabled_groups": {
+    "description": "生效群号列表，留空表示所有群",
+    "type": "list",
+    "default": [],
+    "hint": "填写字符串群号，例如 123456。学习库仍按平台实例、机器人与群分别隔离。"
+  },
+  "collect_candidates": {
+    "description": "默认收集群聊表达候选",
+    "type": "bool",
+    "default": true,
+    "hint": "只进入待审区，不直接模仿。可通过 /学习收集 开启 或 关闭 为当前群设置覆盖值。"
+  },
+  "retrieval_count": {
+    "description": "每次最多参考的表达样例数",
+    "type": "int",
+    "default": 4,
+    "hint": "实际限制为 1–8 条，总样例正文最多约 2200 字符。"
+  }
+}
