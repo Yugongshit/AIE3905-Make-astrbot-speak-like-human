@@ -18,8 +18,8 @@
   "collect_candidates": {
     "description": "默认收集群聊表达候选",
     "type": "bool",
-    "default": true,
-    "hint": "只进入待审区，不直接模仿。可通过 /学习收集 开启 或 关闭 为当前群设置覆盖值。"
+    "default": false,
+    "hint": "推荐在学习控制台逐群开启。只进入待审区；也可通过 /学习收集 开启 或 关闭 设置当前群。"
   },
   "retrieval_count": {
     "description": "每次最多参考的表达样例数",

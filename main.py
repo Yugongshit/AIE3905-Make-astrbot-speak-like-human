@@ -10,10 +10,12 @@ from astrbot.api.message_components import File
 from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, Star, StarTools
 
+from .human_style.panel import LearningPanel
 from .human_style.prompts import MARKER, build_prompt
 from .human_style.service import LearningService
 
 HELP = """表达学习 · 入口：/学习（或 /学习帮助）
+可视化面板：AstrBot 左侧“插件可视化视图” → “表达学习控制台”。
 管理操作仅限 AstrBot 管理员；请在希望学习的目标群操作。
 /学习添加 问题 => 好的回复
 /学习导入 文件名.json（放入插件数据目录 inbox）
@@ -30,7 +32,7 @@ HELP = """表达学习 · 入口：/学习（或 /学习帮助）
 
 
 class HumanStylePlugin(Star):
-    """让群聊回复更自然。学习入口：/学习；投喂记录：/学习上传；教它改写：/学习纠正。"""
+    """让群聊回复更自然。网页学习入口：左侧“插件可视化视图”中的“表达学习控制台”。群内菜单：/学习。"""
 
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -38,6 +40,15 @@ class HumanStylePlugin(Star):
         self.learning = LearningService(StarTools.get_data_dir("astrbot_plugin_human_style"))
         self._uploads: OrderedDict[tuple[str, str], float] = OrderedDict()
         self._last_replies: OrderedDict[str, tuple[str, str, float]] = OrderedDict()
+        self.panel = LearningPanel(self)
+
+    async def initialize(self):
+        self.panel.register()
+
+    async def terminate(self):
+        self.panel.unregister()
+        self._uploads.clear()
+        self._last_replies.clear()
 
     @staticmethod
     def scope(event: AstrMessageEvent) -> str:
@@ -53,13 +64,16 @@ class HumanStylePlugin(Star):
             ensure_ascii=False,
         )
 
-    def applies(self, event: AstrMessageEvent) -> bool:
+    def eligible(self, event: AstrMessageEvent) -> bool:
         if not self.config.get("enabled", True):
             return False
         if self.config.get("group_only", True) and not event.get_group_id():
             return False
         allowed = self.config.get("enabled_groups", [])
-        return not allowed or str(event.get_group_id()) in allowed
+        return not allowed or str(event.get_group_id()) in [str(item) for item in allowed]
+
+    def applies(self, event: AstrMessageEvent) -> bool:
+        return self.eligible(event) and self.learning.memory.style_enabled(self.scope(event))
 
     @staticmethod
     def payload(event: AstrMessageEvent, command: str) -> str:
@@ -75,7 +89,7 @@ class HumanStylePlugin(Star):
         if not event.is_admin():
             await event.send(event.plain_result("学习库由 AstrBot 管理员维护。"))
             return False
-        if not self.applies(event):
+        if not self.eligible(event):
             await event.send(event.plain_result("本会话未启用表达学习，请检查插件配置。"))
             return False
         return True
@@ -119,7 +133,23 @@ class HumanStylePlugin(Star):
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=100)
     async def collect_messages(self, event: AstrMessageEvent):
-        if not self.applies(event) or str(event.get_sender_id()) == str(event.get_self_id()):
+        if str(event.get_sender_id()) == str(event.get_self_id()):
+            return
+        if event.get_group_id():
+            group = getattr(event.message_obj, "group", None)
+            try:
+                await asyncio.to_thread(
+                    self.learning.memory.remember_group,
+                    self.scope(event),
+                    event.get_platform_id(),
+                    str(event.get_self_id()),
+                    str(event.get_group_id()),
+                    getattr(group, "group_name", None) or "",
+                    event.get_platform_name(),
+                )
+            except Exception as exc:
+                logger.warning("群信息登记失败：%s", type(exc).__name__)
+        if not self.eligible(event):
             return
         scope = self.scope(event)
         key = (scope, event.get_sender_id())
@@ -177,7 +207,7 @@ class HumanStylePlugin(Star):
                 scope,
                 event.get_sender_id(),
                 text,
-                bool(self.config.get("collect_candidates", True)),
+                bool(self.config.get("collect_candidates", False)),
             )
         except Exception as exc:
             logger.warning("表达候选收集失败：%s", type(exc).__name__)
@@ -357,7 +387,7 @@ class HumanStylePlugin(Star):
         collecting = await asyncio.to_thread(
             self.learning.memory.collection_enabled,
             scope,
-            bool(self.config.get("collect_candidates", True)),
+            bool(self.config.get("collect_candidates", False)),
         )
         yield event.plain_result(
             f"本会话：生效 {stats['active']} 条，待审 {stats['pending']} 条，停用 {stats['disabled']} 条。"

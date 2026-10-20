@@ -65,4 +65,4 @@ def sdk(tmp_path_factory):
 @pytest.fixture
 def plugin(sdk, tmp_path, monkeypatch):
     monkeypatch.setattr(sdk.module.StarTools, "get_data_dir", lambda *_: tmp_path)
-    return sdk.module.HumanStylePlugin(None, {})
+    return sdk.module.HumanStylePlugin(None, {"collect_candidates": True})
