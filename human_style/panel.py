@@ -13,6 +13,7 @@ from pathlib import Path
 from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 
+from .knowledge import make_entry, parse_knowledge
 from .records import MAX_BYTES, parse_records
 
 PLUGIN = "astrbot_plugin_human_style"
@@ -45,6 +46,7 @@ class LearningPanel:
         self.plugin = plugin
         self.service = plugin.learning
         self.memory = self.service.memory
+        self.knowledge = self.service.knowledge
         self._previews = OrderedDict()
         self._lock = threading.Lock()
         self._routes = []
@@ -64,6 +66,12 @@ class LearningPanel:
             ("groups/<group_id>/sample", self.sample_action, ["POST"]),
             ("groups/<group_id>/export", self.export, ["GET"]),
             ("groups/<group_id>/retrieve", self.retrieve, ["POST"]),
+            ("groups/<group_id>/preview-knowledge-file", self.preview_knowledge_file, ["POST"]),
+            ("groups/<group_id>/preview-knowledge-text", self.preview_knowledge_text, ["POST"]),
+            ("groups/<group_id>/knowledge", self.knowledge_list, ["GET"]),
+            ("groups/<group_id>/knowledge-action", self.knowledge_action, ["POST"]),
+            ("groups/<group_id>/knowledge-export", self.knowledge_export, ["GET"]),
+            ("groups/<group_id>/knowledge-retrieve", self.knowledge_retrieve, ["POST"]),
         ]
         for path, handler, methods in definitions:
             route = f"/{PLUGIN}/panel/{path}"
@@ -106,14 +114,19 @@ class LearningPanel:
         for group in groups:
             group["collect"] = self.memory.collection_enabled(group["scope"], default)
             group["style"] = self.memory.style_enabled(group["scope"])
+            group["knowledge"] = self.memory.knowledge_enabled(group["scope"])
             group["counts"] = self.memory.stats(group["scope"])
+            group["knowledge_counts"] = self.knowledge.stats(group["scope"])
             group["imports"] = self.memory.import_history(group["scope"])
             allowed = self.plugin.config.get("enabled_groups", [])
             group["available"] = bool(self.plugin.config.get("enabled", True)) and (
                 not allowed or group["group_id"] in [str(item) for item in allowed]
             )
+            group["knowledge_available"] = group["available"] and bool(
+                self.plugin.config.get("knowledge_enabled", True)
+            )
             del group["scope"]
-        return {"groups": groups, "version": "0.2.0"}
+        return {"groups": groups, "version": "0.3.0"}
 
     @endpoint
     async def state(self):
@@ -175,27 +188,36 @@ class LearningPanel:
         body = await self._body()
         if (
             not body
-            or set(body) - {"collect", "style", "alias"}
-            or any(type(v) is not bool for k, v in body.items() if k in ("collect", "style"))
+            or set(body) - {"collect", "style", "knowledge", "alias"}
+            or any(
+                type(v) is not bool
+                for k, v in body.items()
+                if k in ("collect", "style", "knowledge")
+            )
         ):
             raise ValueError("开关值须为 true 或 false")
         if "collect" in body:
             await asyncio.to_thread(self.service.set_collection, group["scope"], body["collect"])
         if "style" in body:
             await asyncio.to_thread(self.memory.set_style, group["scope"], body["style"])
+        if "knowledge" in body:
+            await asyncio.to_thread(self.memory.set_knowledge, group["scope"], body["knowledge"])
         if "alias" in body:
             await asyncio.to_thread(self.memory.rename_group, group["scope"], body["alias"])
         return {"status": "ok", "data": {"saved": True}}
 
-    def _preview(self, scope, content, suffix, label, owner):
-        examples = parse_records(content, suffix)
+    def _preview(self, scope, content, suffix, label, owner, mode="expression"):
+        if mode == "knowledge":
+            examples, details = parse_knowledge(content, suffix)
+        else:
+            examples, details = parse_records(content, suffix), {}
         token = secrets.token_urlsafe(24)
         with self._lock:
             now = time.monotonic()
             self._previews = OrderedDict(
                 (key, val) for key, val in self._previews.items() if val[0] > now
             )
-            self._previews[token] = (now + 900, scope, examples, label, owner)
+            self._previews[token] = (now + 900, scope, examples, label, owner, mode)
             while len(self._previews) > 20:
                 self._previews.popitem(last=False)
         return {
@@ -203,10 +225,15 @@ class LearningPanel:
             "total": len(examples),
             "examples": [asdict(example) for example in examples[:5]],
             "label": label,
+            "mode": mode,
+            "details": details,
         }
 
     @endpoint
     async def preview_file(self, group_id):
+        return await self._preview_file(group_id)
+
+    async def _preview_file(self, group_id, mode="expression"):
         group = await asyncio.to_thread(self._group, group_id)
         files = await request.files()
         file = files.get("file")
@@ -226,11 +253,15 @@ class LearningPanel:
             Path(label).suffix,
             label,
             request.username,
+            mode,
         )
         return {"status": "ok", "data": data}
 
     @endpoint
     async def preview_text(self, group_id):
+        return await self._preview_text(group_id)
+
+    async def _preview_text(self, group_id, mode="expression"):
         group = await asyncio.to_thread(self._group, group_id)
         body = await self._body()
         content, suffix = body.get("content"), body.get("format", ".txt")
@@ -243,6 +274,7 @@ class LearningPanel:
             suffix,
             "粘贴记录",
             request.username,
+            mode,
         )
         return {"status": "ok", "data": data}
 
@@ -256,7 +288,10 @@ class LearningPanel:
                 raise ValueError("预览已过期或已经导入，请重新预览")
             if preview[1] != scope or preview[4] != owner:
                 raise ValueError("目标群或操作账号已改变，请重新预览")
-            added = self.memory.add(scope, preview[2], "panel", import_label=preview[3])
+            if preview[5] == "knowledge":
+                added = self.knowledge.add(scope, preview[2], preview[3])
+            else:
+                added = self.memory.add(scope, preview[2], "panel", import_label=preview[3])
             del self._previews[token]
             return {"added": added, "duplicates": len(preview[2]) - added}
 
@@ -333,6 +368,24 @@ class LearningPanel:
 
     @endpoint
     async def template(self):
+        if request.query.get("mode") == "knowledge":
+            return json_response(
+                [
+                    {
+                        "title": "询价时确认品质",
+                        "content": "询价时确认原厂、配套、品牌或拆车需求，并核对配件名称、左右前后和数量。实际适配需供应商核实。",
+                        "category": "询价适配",
+                        "kind": "reference",
+                    },
+                    {
+                        "title": "在此录入已确认的群内业务约定",
+                        "content": "请替换为本群已经确认的开票、运费或售后规则，不要使用别的群的约定。",
+                        "category": "业务规则",
+                        "kind": "rule",
+                    },
+                ],
+                headers={"Content-Disposition": 'attachment; filename="auto-parts-knowledge.json"'},
+            )
         return json_response(
             [
                 {
@@ -343,3 +396,78 @@ class LearningPanel:
             ],
             headers={"Content-Disposition": 'attachment; filename="dialogues.json"'},
         )
+
+    @endpoint
+    async def preview_knowledge_file(self, group_id):
+        return await self._preview_file(group_id, "knowledge")
+
+    @endpoint
+    async def preview_knowledge_text(self, group_id):
+        return await self._preview_text(group_id, "knowledge")
+
+    @endpoint
+    async def knowledge_list(self, group_id):
+        group = await asyncio.to_thread(self._group, group_id)
+        result = await asyncio.to_thread(
+            self.knowledge.search,
+            group["scope"],
+            request.query.get("status", "active"),
+            request.query.get("query", "")[:100],
+            int(request.query.get("page", "1")),
+        )
+        return {"status": "ok", "data": result}
+
+    @endpoint
+    async def knowledge_action(self, group_id):
+        group = await asyncio.to_thread(self._group, group_id)
+        body = await self._body()
+        action = body.get("action")
+        if action == "add":
+            expiry = body.get("expires")
+            if expiry is not None and (type(expiry) not in (int, float) or expiry <= time.time()):
+                raise ValueError("有效期须为未来的时间")
+            entry = make_entry(
+                body.get("title"),
+                body.get("content"),
+                body.get("category", "业务参考"),
+                body.get("kind", "reference"),
+                expires=expiry,
+            )
+            await asyncio.to_thread(self.knowledge.add, group["scope"], [entry], "面板手动录入")
+        elif action == "edit":
+            saved = await asyncio.to_thread(
+                self.knowledge.edit,
+                group["scope"],
+                int(body.get("id", 0)),
+                body.get("title"),
+                body.get("content"),
+                body.get("category", "业务参考"),
+                body.get("expires"),
+            )
+            if not saved:
+                raise ValueError("这条知识不属于当前群或已删除")
+        else:
+            ids = body.get("ids")
+            if not isinstance(ids, list) or any(type(item) is not int for item in ids):
+                raise ValueError("请选择知识编号")
+            await asyncio.to_thread(self.knowledge.action, group["scope"], ids, action)
+        return {"status": "ok", "data": {"saved": True}}
+
+    @endpoint
+    async def knowledge_export(self, group_id):
+        group = await asyncio.to_thread(self._group, group_id)
+        items = await asyncio.to_thread(self.knowledge.export, group["scope"])
+        return json_response(
+            items,
+            headers={"Content-Disposition": f'attachment; filename="knowledge-{group["id"]}.json"'},
+        )
+
+    @endpoint
+    async def knowledge_retrieve(self, group_id):
+        group = await asyncio.to_thread(self._group, group_id)
+        body = await self._body()
+        query = body.get("query")
+        if not isinstance(query, str) or not 1 <= len(query.strip()) <= 500:
+            raise ValueError("请输入 1–500 字符的问题")
+        items = await asyncio.to_thread(self.knowledge.retrieve, group["scope"], query)
+        return {"status": "ok", "data": {"items": items}}

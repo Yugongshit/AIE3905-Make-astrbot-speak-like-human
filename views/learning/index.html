@@ -15,8 +15,8 @@
       <button id="refresh" class="button secondary">刷新群列表</button>
     </header>
     <section class="hero">
-      <div><span class="eyebrow">一点点教，慢慢更自然</span><h1>把好对话，变成好表达。</h1><p>上传值得学习的聊天，选择从哪些群积累，再把你认可的说法留下来。</p></div>
-      <span class="version">v0.2.0 · 数据持续保存</span>
+      <div><span class="eyebrow">汽配知识 × 自然表达</span><h1>懂汽配，也把话说好。</h1><p>上传真实业务记录，留下有来源的经验，也学会群里自然的说话方式。</p></div>
+      <span class="version">v0.3.0 · 汽配知识与表达</span>
     </section>
     <div id="notice" class="notice" role="status">正在连接 AstrBot…</div>
     <section class="metrics" aria-label="学习概览">
@@ -24,11 +24,13 @@
       <article><span>正在收集的群</span><strong id="metric-learning">—</strong><small>新对话进入待审核区</small></article>
       <article><span>生效表达</span><strong id="metric-active">—</strong><small>回复时可检索参考</small></article>
       <article><span>待审核</span><strong id="metric-pending">—</strong><small>确认后才参与学习</small></article>
+      <article><span>汽配知识</span><strong id="metric-knowledge">—</strong><small id="knowledge-pending-count">来源可追溯，历史有边界</small></article>
     </section>
     <nav class="tabs" aria-label="控制台页面">
       <button class="tab active" data-tab="feed" aria-current="page">投喂记录</button>
       <button class="tab" data-tab="groups">群与开关</button>
       <button class="tab" data-tab="library">表达库与审核</button>
+      <button class="tab" data-tab="knowledge">汽配知识库</button>
     </nav>
     <section class="target-row">
       <label for="target">当前操作的群</label>
@@ -40,16 +42,18 @@
       <div class="feed-grid">
         <article class="card">
           <div class="card-heading"><div><h2>投喂聊天记录</h2><p>先预览，再确认。不会选择文件后就直接入库。</p></div><span class="step">01</span></div>
+          <label for="learning-mode" class="field-label">这份资料要学什么？</label>
+          <select id="learning-mode" class="full-select"><option value="knowledge">汽配业务知识 · 支持原始群聊 TXT</option><option value="expression">自然表达 · 整理好的问答样例</option></select>
           <label id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="选择聊天记录文件">
-            <span class="upload-icon" aria-hidden="true">↑</span><strong>点击选择，或把文件拖到这里</strong><span>JSON · JSONL · 问答 TXT，UTF-8，最多 2 MiB</span>
-            <input id="file" type="file" accept=".json,.jsonl,.txt" hidden>
+            <span class="upload-icon" aria-hidden="true">↑</span><strong>点击选择，或把文件拖到这里</strong><span>原始群聊 TXT · Markdown · JSON / JSONL，最多 2 MiB</span>
+            <input id="file" type="file" accept=".json,.jsonl,.txt,.md" hidden>
           </label>
           <p id="filename" class="subtle">尚未选择文件</p>
           <button id="template" class="link-button">下载示例文件</button>
           <div class="divider"><span>也可以直接粘贴</span></div>
           <label for="content" class="field-label">想教给机器人的对话</label>
           <textarea id="content" rows="6" placeholder="问：谢谢，解决了。&#10;答：解决了就好，后面有问题再喊我。"></textarea>
-          <div class="action-row"><select id="format" aria-label="粘贴内容格式"><option value=".txt">问答 TXT</option><option value=".json">JSON</option><option value=".jsonl">JSONL</option></select><button id="preview-text" class="button">预览粘贴内容</button></div>
+          <div class="action-row"><select id="format" aria-label="粘贴内容格式"><option value=".txt">TXT</option><option value=".md">Markdown</option><option value=".json">JSON</option><option value=".jsonl">JSONL</option></select><button id="preview-text" class="button">预览粘贴内容</button></div>
           <p class="footnote">请投放你认可的好对话，并去除无关的个人、账号及业务敏感内容。</p>
         </article>
         <div class="right-column">
@@ -67,10 +71,20 @@
     <section id="tab-groups" class="tab-page" hidden>
       <article class="card">
         <div class="card-heading"><div><h2>在哪里学习，由你决定</h2><p>两个开关独立保存，关闭收集不会删除已经学到的表达。</p></div></div>
-        <div class="table-wrap"><table><thead><tr><th>群与机器人</th><th>从这个群学习</th><th>在这个群使用自然表达</th><th>生效 / 待审</th><th>发现方式</th><th>管理</th></tr></thead><tbody id="group-rows"></tbody></table></div>
+        <div class="table-wrap"><table><thead><tr><th>群与机器人</th><th>从这个群学习</th><th>使用自然表达</th><th>使用汽配知识</th><th>生效 / 待审（表达）</th><th>发现方式</th><th>管理</th></tr></thead><tbody id="group-rows"></tbody></table></div>
         <div id="group-empty" class="empty" hidden><strong>还没有发现群</strong><p>让目标群发一条机器人能收到的消息，再点击“刷新群列表”。</p></div>
         <p class="footnote">OneBot 可同步群列表；其他平台展示接收过消息的群，不能保证是完整的当前成员列表。新安装默认不自动收集；旧版本已有设置会沿用。</p>
       </article>
+    </section>
+    <section id="tab-knowledge" class="tab-page" hidden>
+      <article class="card">
+        <div class="card-heading"><div><h2>懂汽配，也知道信息的边界</h2><p>原始群聊按历史记录保存；报价、库存和交期不会自动变成当前承诺。知识修改后需重新审核。</p></div><div class="action-row"><button id="knowledge-add" class="button secondary">新增规则 / 资料</button><button id="knowledge-export" class="button secondary">导出知识</button></div></div>
+        <div class="library-toolbar"><select id="knowledge-status" aria-label="知识状态"><option value="pending">待审核知识</option><option value="active">已采纳知识</option><option value="disabled">已停用知识</option></select><input id="knowledge-search" type="search" placeholder="搜索配件、业务问题或车型" aria-label="搜索知识"><button id="knowledge-search-button" class="button secondary">搜索</button></div>
+        <div class="action-row"><label><input id="knowledge-select-all" type="checkbox"> 选择本页</label><span id="knowledge-selected" class="subtle">已选 0 条</span><button id="knowledge-approve-selected" class="button secondary" disabled>审核采纳所选</button></div>
+        <div id="knowledge-items" class="sample-list"></div>
+        <div class="pagination"><span id="knowledge-count" class="subtle"></span><button id="knowledge-prev" class="button secondary">上一页</button><span id="knowledge-page-label">1</span><button id="knowledge-next" class="button secondary">下一页</button></div>
+      </article>
+      <article class="card"><h2>知识查询试验</h2><p class="subtle">只查询当前群已审核、未过期的知识，不调用外部模型。历史记录会标明日期，不代表当前报价。</p><div class="action-row"><input id="knowledge-query" maxlength="500" placeholder="例如：后视镜、原厂配套、开票流程" aria-label="业务知识查询"><button id="knowledge-query-button" class="button secondary">查询参考知识</button></div><div id="knowledge-results" class="sample-list"></div></article>
     </section>
 
     <section id="tab-library" class="tab-page" hidden>
@@ -86,6 +100,7 @@
   </main>
   <dialog id="editor"><form id="edit-form"><h2>修改表达</h2><p class="subtle">修改内容不会自动通过待审候选。</p><label for="edit-question">问题</label><textarea id="edit-question" maxlength="500" required rows="3"></textarea><label for="edit-answer">希望学习的回复</label><textarea id="edit-answer" maxlength="1000" required rows="5"></textarea><div class="action-row"><button id="cancel-edit" type="button" class="button secondary">取消</button><button type="submit" class="button">保存修改</button></div></form></dialog>
   <dialog id="action-dialog"><form method="dialog"><h2 id="action-title"></h2><p id="action-description" class="subtle"></p><input id="action-input" aria-label="群备注" maxlength="80" hidden><div class="action-row"><button value="cancel" formnovalidate class="button secondary">取消</button><button value="confirm" class="button">确认</button></div></form></dialog>
+  <dialog id="knowledge-editor"><form id="knowledge-edit-form"><h2 id="knowledge-editor-title">修改业务知识</h2><p class="subtle">历史条目保留原始来源与历史类型。修改后回到待审区。</p><label for="knowledge-title">标题</label><input id="knowledge-title" maxlength="120" required><label for="knowledge-category">分类</label><input id="knowledge-category" maxlength="40" value="业务参考" required><label for="knowledge-kind">类型</label><select id="knowledge-kind"><option value="reference">参考资料</option><option value="rule">管理员确认的群内业务约定</option><option value="history" disabled>历史记录（不能改成当前规则）</option></select><label for="knowledge-content">内容</label><textarea id="knowledge-content" maxlength="4000" rows="6" required></textarea><label for="knowledge-expires">有效期（可选，过期后不再检索）</label><input id="knowledge-expires" type="datetime-local"><div class="action-row"><button id="knowledge-cancel-edit" type="button" class="button secondary">取消</button><button type="submit" class="button">保存到待审核</button></div></form></dialog>
   <div id="toast" class="toast" role="alert" hidden></div>
 </body>
 </html>

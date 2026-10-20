@@ -1,7 +1,7 @@
 name: astrbot_plugin_human_style
 display_name: 好好说话 · 表达学习
-desc: '带可视化学习控制台：上传聊天记录、逐群学习开关、表达审核与纠正。入口：左侧插件视图，或发送 /学习 查看说明。'
-version: v0.2.0
+desc: '汽配知识与自然表达：原始群聊导入、历史报价溯源、知识审核检索和逐群开关。入口：插件可视化视图 → 表达学习控制台。'
+version: v0.3.0
 author: Yugongshit
 repo: https://github.com/Yugongshit/AIE3905-Make-astrbot-speak-like-human
 astrbot_version: '>=4.29.1,<5'

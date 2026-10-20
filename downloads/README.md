@@ -1,5 +1,25 @@
 # 可直接分享的插件安装文件
 
+## 最新版 0.3.0：汽配业务知识库
+
+**[下载 astrbot_plugin_human_style-0.3.0.zip](https://github.com/Yugongshit/AIE3905-Make-astrbot-speak-like-human/raw/refs/heads/main/downloads/astrbot_plugin_human_style-0.3.0.zip)**
+
+在 AstrBot 插件管理中选择“从文件安装”，直接选择 ZIP，不用解压，也无需先卸载旧版。更新后检查卡片显示 **v0.3.0**，刷新浏览器，再从左侧“插件可视化视图 → 表达学习控制台”打开。
+
+选择“汽配业务知识”，可以直接上传带时间和发言人的原始 TXT 群聊，预览后导入待审知识。新增了分类、来源日期与行号、批量审核、有效期、独立知识开关和知识查询。历史报价与库存不会自动变成当前事实。旧的表达学习仍可使用。
+
+安装包只包含程序、说明和虚构演示素材，不包含任何实际客户的聊天记录、车型标识、模型密钥或学习数据库。下载到手机或电脑后可以作为文件转发。
+
+SHA-256：
+
+```text
+7013715a9b0092822c8df2c826407de8c5fc9950e43e7c28ff721adbb8d3da46
+```
+
+[汽配知识库使用指南](../docs/auto-parts-knowledge.md)
+
+## 历史版本 0.2.0
+
 **[下载 astrbot_plugin_human_style-0.2.0.zip](https://github.com/Yugongshit/AIE3905-Make-astrbot-speak-like-human/raw/refs/heads/main/downloads/astrbot_plugin_human_style-0.2.0.zip)**
 
 这是已打包的插件文件，下载到手机或电脑后，可以作为文件发送给别人。也可以打开本目录中的 ZIP 文件，在 GitHub 文件页面点击下载按钮获取。

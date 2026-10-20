@@ -10,6 +10,7 @@ from astrbot.api.message_components import File
 from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, Star, StarTools
 
+from .human_style.knowledge import KNOWLEDGE_MARKER, build_knowledge_prompt
 from .human_style.panel import LearningPanel
 from .human_style.prompts import MARKER, build_prompt
 from .human_style.service import LearningService
@@ -28,6 +29,7 @@ HELP = """表达学习 · 入口：/学习（或 /学习帮助）
 /学习删除 编号：移除样例或候选
 /学习收集 开启 或 关闭：收集本群人类对话候选
 /学习状态：查看数量
+汽配知识：面板可直接上传带时间和发言人的原始群聊，审核后参考。
 支持 UTF-8 的 JSON / JSONL / 问答 TXT。各群学习库隔离。"""
 
 
@@ -96,25 +98,39 @@ class HumanStylePlugin(Star):
 
     @filter.on_llm_request()
     async def style_request(self, event: AstrMessageEvent, req: ProviderRequest):
-        if not self.applies(event):
+        if not self.eligible(event):
             return
         # Save only the actual user's text for later explicit feedback, not tool results.
         event.set_extra("human_style_question", event.get_message_str())
-        if MARKER in (req.system_prompt or ""):
-            return
-        try:
-            top_k = max(1, min(8, int(self.config.get("retrieval_count", 4))))
-            samples = await asyncio.to_thread(
-                self.learning.memory.retrieve,
-                self.scope(event),
-                event.get_message_str(),
-                top_k,
-            )
-        except Exception as exc:
-            # Wording should still work if persistent memory is temporarily unavailable.
-            logger.warning("表达记忆读取失败，使用基础语气规则：%s", type(exc).__name__)
-            samples = []
-        req.system_prompt = (req.system_prompt or "") + "\n\n" + build_prompt(samples)
+        if self.applies(event) and MARKER not in (req.system_prompt or ""):
+            try:
+                top_k = max(1, min(8, int(self.config.get("retrieval_count", 4))))
+                samples = await asyncio.to_thread(
+                    self.learning.memory.retrieve,
+                    self.scope(event),
+                    event.get_message_str(),
+                    top_k,
+                )
+            except Exception as exc:
+                logger.warning("表达记忆读取失败，使用基础语气规则：%s", type(exc).__name__)
+                samples = []
+            req.system_prompt = (req.system_prompt or "") + "\n\n" + build_prompt(samples)
+        if (
+            self.config.get("knowledge_enabled", True)
+            and self.learning.memory.knowledge_enabled(self.scope(event))
+            and KNOWLEDGE_MARKER not in (req.system_prompt or "")
+        ):
+            try:
+                items = await asyncio.to_thread(
+                    self.learning.knowledge.retrieve,
+                    self.scope(event),
+                    event.get_message_str(),
+                )
+                req.system_prompt = (
+                    (req.system_prompt or "") + "\n\n" + build_knowledge_prompt(items)
+                )
+            except Exception as exc:
+                logger.warning("业务知识读取失败：%s", type(exc).__name__)
 
     @filter.on_llm_response()
     async def remember_for_feedback(self, event: AstrMessageEvent, response: LLMResponse):
@@ -208,6 +224,7 @@ class HumanStylePlugin(Star):
                 event.get_sender_id(),
                 text,
                 bool(self.config.get("collect_candidates", False)),
+                getattr(event.message_obj, "timestamp", None),
             )
         except Exception as exc:
             logger.warning("表达候选收集失败：%s", type(exc).__name__)

@@ -70,6 +70,7 @@ def main():
                     frame = page.frame_locator("iframe")
                     expect(frame.locator("#metric-groups")).to_have_text("2", timeout=20000)
                     expect(frame.locator("#target")).to_be_enabled()
+                    frame.locator("#learning-mode").select_option("expression")
                     sample = [
                         {
                             "question": "怎么还没发货？",
@@ -88,7 +89,7 @@ def main():
                     )
                     expect(frame.locator("#commit")).to_be_enabled()
                     page.screenshot(
-                        path=str(args.artifacts / "human-style-panel-0.2.0.png"), full_page=True
+                        path=str(args.artifacts / "human-style-panel-0.3.0.png"), full_page=True
                     )
                     frame.locator("#commit").click()
                     expect(frame.locator("#metric-active")).to_have_text("1", timeout=10000)
@@ -145,12 +146,79 @@ def main():
                     page.evaluate("window.scrollTo(0,0)")
                     expect(frame.locator(".brand")).to_be_in_viewport()
                     page.screenshot(
-                        path=str(args.artifacts / "human-style-panel-mobile-0.2.0.png"),
+                        path=str(args.artifacts / "human-style-panel-mobile-0.3.0.png"),
                         full_page=True,
+                    )
+                    page.set_viewport_size({"width": 1440, "height": 1100})
+                    frame.locator("#learning-mode").select_option("knowledge")
+                    chat = "示例汽配群\n\n2026-01-02 09:00:00 买家\n右前大灯，原厂有吗\n\n2026-01-02 09:01:00 卖家\n右前大灯 原厂777 订货2天\n\n2026-01-02 09:02:00 买家\n[media]\n"
+                    frame.locator("#file").set_input_files(
+                        {
+                            "name": "示例汽配群.txt",
+                            "mimeType": "text/plain",
+                            "buffer": chat.encode(),
+                        }
+                    )
+                    expect(frame.locator("#preview-summary")).to_contain_text(
+                        "识别 2 条待审知识", timeout=10000
+                    )
+                    frame.locator("#commit").click()
+                    expect(frame.locator("#knowledge-pending-count")).to_contain_text(
+                        "2 条知识待审核", timeout=10000
+                    )
+                    expect(frame.locator("#metric-knowledge")).to_have_text("0")
+                    frame.locator("[data-tab=knowledge]").click()
+                    expect(frame.locator("#knowledge-items")).to_contain_text(
+                        "原厂777", timeout=10000
+                    )
+                    frame.locator("#knowledge-select-all").check()
+                    frame.locator("#knowledge-approve-selected").click()
+                    frame.locator("#action-dialog button[value=confirm]").click()
+                    expect(frame.locator("#metric-knowledge")).to_have_text("2", timeout=10000)
+                    frame.locator("#knowledge-status").select_option("active")
+                    expect(frame.locator("#knowledge-items")).to_contain_text(
+                        "历史信息，不代表当前报价", timeout=10000
+                    )
+                    frame.locator("#knowledge-query").fill("大灯")
+                    frame.locator("#knowledge-query-button").click()
+                    expect(frame.locator("#knowledge-results")).to_contain_text(
+                        "2026-01-02", timeout=10000
+                    )
+                    frame.locator("body").evaluate("()=>window.scrollTo(0,0)")
+                    page.evaluate("window.scrollTo(0,0)")
+                    expect(frame.locator(".brand")).to_be_in_viewport()
+                    # Capture in a fresh viewport; resizing an opaque iframe can
+                    # leave a transient blank compositor surface in headless Chromium.
+                    shot_page = browser.new_page(viewport={"width": 1440, "height": 1100})
+                    shot_page.goto(f"http://127.0.0.1:{port}/test-host")
+                    shot_frame = shot_page.frame_locator("iframe")
+                    expect(shot_frame.locator("#metric-knowledge")).to_have_text("2", timeout=20000)
+                    shot_frame.locator("[data-tab=knowledge]").click()
+                    shot_frame.locator("#knowledge-status").select_option("active")
+                    expect(shot_frame.locator("#knowledge-items")).to_contain_text(
+                        "原厂777", timeout=10000
+                    )
+                    shot_page.screenshot(
+                        path=str(args.artifacts / "auto-parts-knowledge-panel-0.3.0.png"),
+                        full_page=True,
+                    )
+                    shot_page.close()
+                    frame.locator("#knowledge-items").get_by_role(
+                        "button", name="修改", exact=True
+                    ).first.click()
+                    expect(frame.locator("#knowledge-kind")).to_be_disabled()
+                    frame.locator("#knowledge-content").fill(
+                        "历史报价仅供回溯，当前请向供应商确认。"
+                    )
+                    frame.locator("#knowledge-edit-form button[type=submit]").click()
+                    expect(frame.locator("#metric-knowledge")).to_have_text("1", timeout=10000)
+                    frame.locator("#knowledge-status").select_option("pending")
+                    expect(frame.locator("#knowledge-items")).to_contain_text(
+                        "历史报价仅供回溯", timeout=10000
                     )
                     assert not errors, errors
                     print(
-                        "Browser checks passed: sandboxed bridge, file preview/import, group switches, rename, edit, retrieval, export, deletion, text-only rendering, target reset, reload persistence, mobile layout."
+                        "Browser checks passed: sandboxed bridge, expression and raw auto-parts imports, group controls, knowledge approval/query, edit re-review, export, deletion, text-only rendering, reload persistence and mobile layout."
                     )
                 finally:
                     browser.close()

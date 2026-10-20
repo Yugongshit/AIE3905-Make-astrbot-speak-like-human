@@ -20,7 +20,7 @@ def main():
         "human_style": {".py"},
         "views": {".html", ".css", ".js"},
         "i18n": {".json"},
-        "examples": {".json"},
+        "examples": {".json", ".txt", ".md"},
         "docs": {".md", ".png"},
     }.items():
         files.extend(

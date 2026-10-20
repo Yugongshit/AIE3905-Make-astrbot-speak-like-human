@@ -145,6 +145,11 @@ async def test_panel_switches_affect_real_plugin_independently(panel, plugin, sd
     assert plugin.learning.memory.stats(plugin.scope(first))["pending"] == 1
     request = sdk.Request(system_prompt="unchanged")
     await plugin.style_request(first, request)
+    assert "human_style_expression_v1" not in request.system_prompt
+    assert "human_style_auto_parts_knowledge_v1" in request.system_prompt
+    data(client.post(url, headers=headers(), json={"knowledge": False}))
+    request = sdk.Request(system_prompt="unchanged")
+    await plugin.style_request(first, request)
     assert request.system_prompt == "unchanged"
 
 
@@ -237,7 +242,7 @@ async def test_route_cleanup_and_restart_preserve_controls(panel, plugin):
     scope = restarted.group(a)["scope"]
     assert not restarted.collection_enabled(scope, True)
     assert not restarted.style_enabled(scope)
-    assert len(context.registered_web_apis) == 11
+    assert len(context.registered_web_apis) == 17
     await plugin.terminate()
     assert context.registered_web_apis == []
 
@@ -318,3 +323,116 @@ def test_v01_library_and_collection_settings_migrate_without_data_loss(tmp_path)
     assert memory.retrieve(scope, "问题")[0].answer == "以前的好表达"
     assert not memory.collection_enabled(scope, True)
     assert memory.style_enabled(scope)
+
+
+async def test_raw_chat_upload_review_and_real_model_context(panel, plugin, sdk):
+    from test_knowledge import CHAT
+
+    client, headers, _ = panel
+    a, b = group_ids(panel)
+    parsed = data(
+        client.post(
+            f"{BASE}/groups/{a}/preview-knowledge-file",
+            headers=headers(),
+            files={"file": ("parts-chat.txt", CHAT.encode())},
+        )
+    )
+    assert parsed["mode"] == "knowledge"
+    assert parsed["details"]["messages"] == 8
+    assert parsed["total"] == 5
+    assert plugin.learning.knowledge.stats(plugin.learning.memory.group(a)["scope"])["pending"] == 0
+    assert (
+        client.post(
+            f"{BASE}/groups/{b}/commit", headers=headers(), json={"token": parsed["token"]}
+        ).status_code
+        == 400
+    )
+    data(
+        client.post(f"{BASE}/groups/{a}/commit", headers=headers(), json={"token": parsed["token"]})
+    )
+    items = data(client.get(f"{BASE}/groups/{a}/knowledge?status=pending", headers=headers()))[
+        "items"
+    ]
+    assert len(items) == 5
+    target = plugin.learning.memory.group(a)
+    event = sdk.Event("右前大灯多少钱", group=target["group_id"])
+    request = sdk.Request(model="deepseekprov4")
+    await plugin.style_request(event, request)
+    assert "1888" not in request.system_prompt
+    assert (
+        client.post(
+            f"{BASE}/groups/{b}/knowledge-action",
+            headers=headers(),
+            json={"action": "approve", "ids": [items[0]["id"]]},
+        ).status_code
+        == 400
+    )
+    data(
+        client.post(
+            f"{BASE}/groups/{a}/knowledge-action",
+            headers=headers(),
+            json={"action": "approve", "ids": [item["id"] for item in items]},
+        )
+    )
+    request = sdk.Request(model="deepseekprov4")
+    await plugin.style_request(event, request)
+    assert "1888" in request.system_prompt
+    assert "不是当前价格/库存/交期/订单状态" in request.system_prompt
+    assert request.model == "deepseekprov4"
+    assert "LTEST123456789012" not in request.system_prompt
+    data(client.post(f"{BASE}/groups/{a}/settings", headers=headers(), json={"knowledge": False}))
+    request = sdk.Request()
+    await plugin.style_request(event, request)
+    assert "human_style_auto_parts_knowledge_v1" not in request.system_prompt
+
+
+def test_manual_rule_edit_requires_review_and_template_roundtrip(panel):
+    client, headers, _ = panel
+    a, _ = group_ids(panel)
+    data(
+        client.post(
+            f"{BASE}/groups/{a}/knowledge-action",
+            headers=headers(),
+            json={
+                "action": "add",
+                "title": "开票确认",
+                "content": "先确认本次需要普票还是专票",
+                "category": "结算",
+                "kind": "rule",
+            },
+        )
+    )
+    item = data(client.get(f"{BASE}/groups/{a}/knowledge?status=pending", headers=headers()))[
+        "items"
+    ][0]
+    data(
+        client.post(
+            f"{BASE}/groups/{a}/knowledge-action",
+            headers=headers(),
+            json={"action": "approve", "ids": [item["id"]]},
+        )
+    )
+    data(
+        client.post(
+            f"{BASE}/groups/{a}/knowledge-action",
+            headers=headers(),
+            json={
+                "action": "edit",
+                "id": item["id"],
+                "title": item["title"],
+                "content": "先确认票种和抬头",
+                "category": "结算",
+            },
+        )
+    )
+    assert (
+        data(client.get(f"{BASE}/groups/{a}/knowledge?status=active", headers=headers()))["total"]
+        == 0
+    )
+    exported = client.get(f"{BASE}/groups/{a}/knowledge-export", headers=headers())
+    assert exported.json()[0]["kind"] == "rule"
+    template = client.get(BASE + "/template?mode=knowledge", headers=headers())
+    assert template.status_code == 200
+    from human_style.knowledge import parse_knowledge
+
+    assert parse_knowledge(template.text, ".json")[0]

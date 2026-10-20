@@ -1,4 +1,10 @@
 {
+  "knowledge_enabled": {
+    "description": "启用汽配业务知识与核对提示",
+    "type": "bool",
+    "default": true,
+    "hint": "与自然表达独立。群聊原文进入待审核知识库；历史报价不作为当前库存或价格。可在面板逐群关闭。"
+  },
   "enabled": {
     "description": "启用自然表达与学习模块",
     "type": "bool",

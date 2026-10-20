@@ -309,6 +309,21 @@ class Memory:
             ).fetchone()
         return row[0] == "1" if row else True
 
+    def set_knowledge(self, scope: str, enabled: bool):
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO settings VALUES (?, 'knowledge', ?) "
+                "ON CONFLICT(scope,name) DO UPDATE SET value=excluded.value",
+                (scope, str(int(enabled))),
+            )
+
+    def knowledge_enabled(self, scope: str) -> bool:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT value FROM settings WHERE scope=? AND name='knowledge'", (scope,)
+            ).fetchone()
+        return row[0] == "1" if row else True
+
     def search_samples(self, scope: str, status="active", query="", page=1, size=20) -> dict:
         if status not in ("active", "pending", "disabled"):
             raise ValueError("无效的样例状态")
