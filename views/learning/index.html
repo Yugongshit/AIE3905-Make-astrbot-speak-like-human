@@ -16,7 +16,7 @@
     </header>
     <section class="hero">
       <div><span class="eyebrow">汽配知识 × 自然表达</span><h1>懂汽配，也把话说好。</h1><p>两个独立学习入口：一个教它怎么说话，一个帮它理解汽配工作环境。由你确认后再学习。</p></div>
-      <span class="version">v0.4.1 · 双入口学习</span>
+      <span class="version">v0.4.2 · 双入口学习</span>
     </section>
     <div id="notice" class="notice" role="status">正在连接 AstrBot…</div>
     <section class="metrics" aria-label="学习概览">
@@ -48,11 +48,16 @@
           <div class="card-heading"><div><h2 id="feed-title">熟悉工作环境</h2><p>选文件不会上传。先点击预览，再确认学习；传错可取消或更换。</p></div><span class="step">01</span></div>
           <p id="mode-help" class="mode-help">学习术语、部件区别与工作流程，过滤具体交易金额和客户信息。提取结果需审核。</p>
           <label id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="选择聊天记录文件">
-            <span class="upload-icon" aria-hidden="true">↑</span><strong>点击选择，或把文件拖到这里</strong><span>原始群聊 TXT · Markdown · JSON / JSONL，最多 2 MiB</span>
-            <input id="file" type="file" accept=".json,.jsonl,.txt,.md" hidden>
+            <span class="upload-icon" aria-hidden="true">↑</span><strong>点击多选文件，或拖入文件 / 整个文件夹</strong><span>TXT · Markdown · JSON / JSONL，单文件最多 2 MiB</span>
+            <input id="file" type="file" accept=".json,.jsonl,.txt,.md" multiple hidden>
           </label>
+          <div class="action-row"><button id="choose-folder" class="button secondary">选择整个文件夹</button><span id="folder-hint" class="subtle">含子文件夹；只读取支持的记录文件</span></div>
+          <input id="folder" type="file" webkitdirectory directory multiple hidden>
+          <p class="footnote">每批最多 50 个文件、合计 20 MiB / 10000 条记录。先检查清单，再预览和确认；不会自动上传。</p>
+          <div id="file-queue" class="file-queue" aria-label="本次上传文件清单"></div>
           <p id="filename" class="subtle">尚未选择文件</p>
           <div class="action-row"><button id="preview-file" class="button" disabled>预览所选文件</button><button id="cancel-upload" class="button secondary" disabled>取消 / 清空</button></div>
+          <p class="footnote">“移出本次”和“取消 / 清空”只清理本次清单，不删除已经学过的内容。</p>
           <button id="template" class="link-button">下载示例文件</button>
           <div class="divider"><span>也可以直接粘贴</span></div>
           <label for="content" class="field-label">想教给机器人的内容</label>
@@ -65,6 +70,7 @@
             <div class="card-heading"><div><h2>导入预览</h2><p id="preview-summary">预览后显示提取结果，确认前不写入学习库。</p></div><span class="step">02</span></div>
             <div id="preview" class="empty"><span class="empty-icon" aria-hidden="true">“ ”</span><strong>先给它一些值得学习的话</strong><p>选好文件后点击“预览所选文件”，或粘贴内容后点击预览。</p></div>
             <p id="preview-target" class="subtle"></p>
+            <div id="batch-result" class="notice" role="status" hidden></div>
             <button id="commit" class="button full" disabled>确认学习（需再次核对）</button>
           </article>
           <article class="card"><h2>最近导入</h2><p class="subtle">所选群最近 20 次面板导入，重复问答不会累加。</p><div id="history" class="history-list"></div></article>
@@ -103,7 +109,7 @@
     <footer>学习库持续积累 · 不修改模型参数 · 好素材与纠正反馈决定表达效果</footer>
   </main>
   <dialog id="editor"><form id="edit-form"><h2>修改表达</h2><p class="subtle">修改内容不会自动通过待审候选。</p><label for="edit-question">问题</label><textarea id="edit-question" maxlength="500" required rows="3"></textarea><label for="edit-answer">希望学习的回复</label><textarea id="edit-answer" maxlength="1000" required rows="5"></textarea><div class="action-row"><button id="cancel-edit" type="button" class="button secondary">取消</button><button type="submit" class="button">保存修改</button></div></form></dialog>
-  <dialog id="action-dialog"><form method="dialog"><h2 id="action-title"></h2><p id="action-description" class="subtle"></p><input id="action-input" aria-label="群备注" maxlength="80" hidden><div class="action-row"><button value="cancel" formnovalidate class="button secondary">取消</button><button value="confirm" class="button">确认</button></div></form></dialog>
+  <dialog id="action-dialog"><form method="dialog"><h2 id="action-title"></h2><p id="action-description" class="subtle"></p><ul id="action-files" class="confirmation-files" hidden></ul><input id="action-input" aria-label="群备注" maxlength="80" hidden><div class="action-row"><button value="cancel" formnovalidate class="button secondary">取消</button><button value="confirm" class="button">确认</button></div></form></dialog>
   <dialog id="knowledge-editor"><form id="knowledge-edit-form"><h2 id="knowledge-editor-title">修改业务知识</h2><p class="subtle">填写可复用的术语、部件区别、流程或本群沟通约定；不填写交易金额或客户信息。修改后回到待审区。</p><label for="knowledge-title">标题</label><input id="knowledge-title" maxlength="120" required><label for="knowledge-category">分类</label><input id="knowledge-category" maxlength="40" value="业务参考" required><label for="knowledge-kind">类型</label><select id="knowledge-kind"><option value="reference">参考资料</option><option value="rule">管理员确认的群内业务约定</option><option value="history" disabled>旧版交易片段（不参与检索）</option></select><label for="knowledge-content">内容</label><textarea id="knowledge-content" maxlength="4000" rows="6" required></textarea><label for="knowledge-expires">有效期（可选，过期后不再检索）</label><input id="knowledge-expires" type="datetime-local"><div class="action-row"><button id="knowledge-cancel-edit" type="button" class="button secondary">取消</button><button type="submit" class="button">保存到待审核</button></div></form></dialog>
   <div id="toast" class="toast" role="alert" hidden></div>
 </body>

@@ -1,6 +1,28 @@
 # 可直接分享的插件安装文件
 
-## 最新版 0.4.1：修复重复群登记
+## 最新版 0.4.2：多文件 / 文件夹批量投喂
+
+**[下载 astrbot_plugin_human_style-0.4.2.zip](https://github.com/Yugongshit/AIE3905-Make-astrbot-speak-like-human/raw/refs/heads/main/downloads/astrbot_plugin_human_style-0.4.2.zip)**
+
+AstrBot“插件 → 从文件安装”选择 ZIP，不用解压或先卸载。确认显示 **v0.4.2**，重新加载插件并刷新浏览器，从“插件可视化视图 → 表达学习控制台”打开。
+
+两个学习入口均可多选文件、选择整个文件夹或拖入文件夹，包含子目录。先检查清单，可取消勾选或移出文件，点击预览才上传；预览失败文件会标明原因并排除，最终确认弹窗逐一列出本次要学习的文件。导入完成后逐文件显示新增、重复或失败情况，可重试失败文件。
+
+每批最多 **50 个文件、合计 20 MiB / 10000 条记录**；单文件最多 **2 MiB / 2000 条**。文件夹中不支持格式的文件会跳过并提示，超出限制不会默默截断。手机或不支持目录选择的浏览器可改用多选文件。
+
+本次只改进批量投喂，**没有增加按文件完整撤销学习功能**。“取消 / 清空”只清理当前清单，不会删除已经学过的内容。
+
+70 项测试和浏览器验证通过，包括真实文件夹选择、子目录读取、目录分段拖入、多文件确认、坏文件排除、失败重试、重复跳过、群隔离及旧版重复群修复。安装包只含代码、说明及虚构素材，没有真实用户聊天或学习数据库。
+
+SHA-256：
+
+```text
+cbc3a0a58d7155125e1f3ec57ac3811bdb1145a64e3725ad0fdcf771c46a2be5
+```
+
+[操作说明](../docs/panel.md) · [批量投喂预览](../docs/images/batch-folder-panel.png) · [确认弹窗](../docs/images/batch-confirmation.png)
+
+## 历史版本 0.4.1：修复重复群登记
 
 **[下载 astrbot_plugin_human_style-0.4.1.zip](https://github.com/Yugongshit/AIE3905-Make-astrbot-speak-like-human/raw/refs/heads/main/downloads/astrbot_plugin_human_style-0.4.1.zip)**
 

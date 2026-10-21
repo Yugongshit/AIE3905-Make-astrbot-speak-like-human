@@ -256,7 +256,7 @@ async def test_route_cleanup_and_restart_preserve_controls(panel, plugin):
     scope = restarted.group(a)["scope"]
     assert not restarted.collection_enabled(scope, True)
     assert not restarted.style_enabled(scope)
-    assert len(context.registered_web_apis) == 17
+    assert len(context.registered_web_apis) == 18
     await plugin.terminate()
     assert context.registered_web_apis == []
 
@@ -509,3 +509,182 @@ def test_panel_merges_legacy_qq_groups_and_reports_combined_counts(panel, plugin
     result = data(client.get(BASE + "/state", headers=headers()))
     matching = [row for row in result["groups"] if row["group_id"] == group]
     assert len(matching) == 1 and matching[0]["collect"] is False
+
+
+def batch_preview(panel, group, filename, examples=None, knowledge=False):
+    client, headers, _ = panel
+    records = examples or [{"question": "收到没有", "answer": "收到了，多谢你。"}]
+    return data(
+        client.post(
+            f"{BASE}/groups/{group}/preview-knowledge-file"
+            if knowledge
+            else f"{BASE}/groups/{group}/preview-file",
+            headers=headers(),
+            files={"file": (filename, json.dumps(records).encode())},
+        )
+    )
+
+
+def test_batch_confirm_isolation_dedupe_and_file_history(panel):
+    client, headers, _ = panel
+    a, b = group_ids(panel)
+    first = batch_preview(panel, a, "first.json")
+    second = batch_preview(
+        panel,
+        a,
+        "second.json",
+        [
+            {"question": "收到没有", "answer": "收到了，多谢你。"},
+            {"question": "什么时候发货", "answer": "你着急用吧，先确认一下时间。"},
+        ],
+    )
+    tokens = [first["token"], second["token"]]
+    url = f"{BASE}/groups/{a}/commit-batch"
+    for target, owner, confirmed in (
+        (a, "test-admin", False),
+        (b, "test-admin", True),
+        (a, "other-admin", True),
+    ):
+        assert (
+            client.post(
+                f"{BASE}/groups/{target}/commit-batch",
+                headers=headers(owner),
+                json={"tokens": tokens, "confirmed": confirmed},
+            ).status_code
+            == 400
+        )
+    assert data(client.get(f"{BASE}/groups/{a}/samples", headers=headers()))["total"] == 0
+    result = data(client.post(url, headers=headers(), json={"tokens": tokens, "confirmed": True}))
+    assert result["added"] == 2 and result["duplicates"] == 1
+    assert [item["status"] for item in result["items"]] == ["ok", "ok"]
+    assert data(client.get(f"{BASE}/groups/{a}/samples", headers=headers()))["total"] == 2
+    assert data(client.get(f"{BASE}/groups/{b}/samples", headers=headers()))["total"] == 0
+    state = data(client.get(BASE + "/state", headers=headers()))
+    group = next(group for group in state["groups"] if group["id"] == a)
+    assert {item["label"] for item in group["imports"]} == {"first.json", "second.json"}
+    assert (
+        client.post(url, headers=headers(), json={"tokens": tokens, "confirmed": True}).status_code
+        == 400
+    )
+
+
+def test_batch_rejects_mixed_modes_duplicate_and_expired_tokens_before_any_write(panel, plugin):
+    client, headers, _ = panel
+    a, _ = group_ids(panel)
+    first = batch_preview(panel, a, "style.json")
+    environment = batch_preview(
+        panel,
+        a,
+        "terms.json",
+        [{"title": "机盖称呼", "content": "机盖通常指发动机舱盖"}],
+        knowledge=True,
+    )
+    url = f"{BASE}/groups/{a}/commit-batch"
+    for tokens in (
+        [],
+        [first["token"]] * 2,
+        [first["token"], environment["token"]],
+        [first["token"]] * 51,
+    ):
+        assert (
+            client.post(
+                url, headers=headers(), json={"tokens": tokens, "confirmed": True}
+            ).status_code
+            == 400
+        )
+    second = batch_preview(panel, a, "second.json")
+    old = plugin.panel._previews[second["token"]]
+    plugin.panel._previews[second["token"]] = (0, *old[1:])
+    assert (
+        client.post(
+            url,
+            headers=headers(),
+            json={"tokens": [first["token"], second["token"]], "confirmed": True},
+        ).status_code
+        == 400
+    )
+    assert data(client.get(f"{BASE}/groups/{a}/samples", headers=headers()))["total"] == 0
+    assert first["token"] in plugin.panel._previews
+
+
+def test_fifty_file_previews_stay_available_until_batch_confirm(panel):
+    client, headers, _ = panel
+    a, _ = group_ids(panel)
+    previews = [
+        batch_preview(
+            panel, a, f"record-{i}.json", [{"question": f"问题{i}", "answer": f"认可的表达{i}"}]
+        )
+        for i in range(50)
+    ]
+    result = data(
+        client.post(
+            f"{BASE}/groups/{a}/commit-batch",
+            headers=headers(),
+            json={"confirmed": True, "tokens": [item["token"] for item in previews]},
+        )
+    )
+    assert len(result["items"]) == result["added"] == 50
+    assert all(item["status"] == "ok" for item in result["items"])
+
+
+def test_batch_reports_partial_storage_failure_and_retries_only_failed_file(
+    panel, plugin, monkeypatch
+):
+    import sqlite3
+
+    client, headers, _ = panel
+    a, _ = group_ids(panel)
+    first = batch_preview(panel, a, "good.json")
+    second = batch_preview(
+        panel, a, "retry.json", [{"question": "第二个问题", "answer": "第二个表达"}]
+    )
+    original = plugin.learning.memory.add
+
+    def fail_one(*args, **kwargs):
+        if kwargs.get("import_label") == "retry.json":
+            raise sqlite3.OperationalError("private internal details")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(plugin.learning.memory, "add", fail_one)
+    url = f"{BASE}/groups/{a}/commit-batch"
+    result = data(
+        client.post(
+            url,
+            headers=headers(),
+            json={"confirmed": True, "tokens": [first["token"], second["token"]]},
+        )
+    )
+    assert [item["status"] for item in result["items"]] == ["ok", "error"]
+    assert "private internal details" not in str(result)
+    assert data(client.get(f"{BASE}/groups/{a}/samples", headers=headers()))["total"] == 1
+    assert second["token"] in plugin.panel._previews
+    assert first["token"] not in plugin.panel._previews
+    monkeypatch.setattr(plugin.learning.memory, "add", original)
+    assert (
+        data(
+            client.post(
+                url, headers=headers(), json={"confirmed": True, "tokens": [second["token"]]}
+            )
+        )["added"]
+        == 1
+    )
+
+
+def test_batch_record_and_byte_limits_leave_database_untouched(panel, plugin):
+    client, headers, _ = panel
+    a, _ = group_ids(panel)
+    first = batch_preview(panel, a, "limits.json")
+    token = first["token"]
+    original = plugin.panel._previews[token]
+    plugin.panel._previews[token] = (*original[:6], {"bytes": 20 * 1024 * 1024 + 1, "cost": 100})
+    url = f"{BASE}/groups/{a}/commit-batch"
+    assert (
+        client.post(url, headers=headers(), json={"confirmed": True, "tokens": [token]}).status_code
+        == 400
+    )
+    plugin.panel._previews[token] = (*original[:2], original[2] * 10001, *original[3:])
+    assert (
+        client.post(url, headers=headers(), json={"confirmed": True, "tokens": [token]}).status_code
+        == 400
+    )
+    assert data(client.get(f"{BASE}/groups/{a}/samples", headers=headers()))["total"] == 0

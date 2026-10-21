@@ -1,7 +1,7 @@
 "use strict";
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { groups: [], selected: "", preview: null, file: null, mode: "knowledge", page: 1, kPage: 1, tab: "feed", busy: false, connected: false };
+  const state = { groups: [], selected: "", preview: null, files: [], nextFileId: 0, mode: "knowledge", page: 1, kPage: 1, tab: "feed", busy: false, connected: false };
   let bridge, toastTimer, editorTarget, knowledgeEditorTarget;
   const knowledgeMode = () => state.mode === "knowledge";
   const el = (tag, text, className) => {
@@ -36,13 +36,14 @@
       node.disabled = state.busy || !state.connected;
     });
     const noGroup = !current();
-    for (const id of ["preview-text", "export", "search-button", "try-button", "sample-status", "search", "try-query", "content", "format", "file"])
+    for (const id of ["preview-text", "export", "search-button", "try-button", "sample-status", "search", "try-query", "content", "format", "file", "folder", "choose-folder"])
       $(id).disabled = state.busy || !state.connected || noGroup;
     for (const id of ["enter-expression", "enter-environment", "knowledge-add", "knowledge-export", "knowledge-status", "knowledge-search", "knowledge-search-button", "knowledge-query", "knowledge-query-button", "knowledge-select-all"])
       $(id).disabled = state.busy || !state.connected || noGroup;
-    $("preview-file").disabled = state.busy || !state.connected || noGroup || !state.file;
-    $("cancel-upload").disabled = state.busy || !state.connected || !(state.file || state.preview || $("content").value);
-    $("commit").disabled = state.busy || !state.connected || !state.preview || noGroup;
+    $("preview-file").disabled = state.busy || !state.connected || noGroup || !state.files.some((item) => item.included && item.status !== "done");
+    $("cancel-upload").disabled = state.busy || !state.connected || !(state.files.length || state.preview || $("content").value);
+    $("commit").disabled = state.busy || !state.connected || !state.preview || noGroup || state.preview.total > 10000;
+    if (!("webkitdirectory" in $("folder"))) $("choose-folder").disabled = true;
     $("prev").disabled = state.busy || !state.connected || state.page <= 1 || noGroup;
     $("next").disabled = state.busy || !state.connected || !state.hasNext || noGroup;
     $("knowledge-prev").disabled = state.busy || !state.connected || state.kPage <= 1 || noGroup;
@@ -52,6 +53,7 @@
   }
   function clearPreview() {
     state.preview = null;
+    $("batch-result").hidden = true;
     $("preview").replaceChildren(el("strong", "先给它一些值得学习的话"), el("p", "选好文件后点击“预览所选文件”，或粘贴内容后点击预览。"));
     $("preview").className = "empty";
     $("preview-summary").textContent = knowledgeMode() ? "预览后展示前 5 条概念，确认后进入待审核区。" : "解析后会显示前 5 组问答。";
@@ -70,6 +72,7 @@
     $("preview").replaceChildren(...data.examples.map(data.mode === "knowledge" ? (record) => knowledgeCard(record, false) : dialogue));
     $("preview-summary").textContent = data.mode === "knowledge" ? `提取 ${data.total} 条待审环境知识，展示前 ${Math.min(5, data.total)} 条。${data.details.format === "chat" ? `共 ${data.details.messages} 条消息；提取可复用概念，不保存原始交易。` : "审核后才参与检索。"}` : `识别到 ${data.total} 组问答，展示前 ${Math.min(5, data.total)} 组。`;
     $("preview-target").textContent = `将导入：${groupName(current())}。重复内容会自动跳过，预览 15 分钟内有效。`;
+    if (data.batch) $("preview-summary").textContent = `已预览 ${data.files.length} 个所选文件，共 ${data.total} 条，展示前 ${Math.min(5, data.total)} 条。${data.total > 10000 ? "超过每批 10000 条限制，请取消勾选部分文件。" : "其他失败或未勾选的文件不会导入。"}`;
     lockControls();
   }
   function date(timestamp) {
@@ -94,9 +97,10 @@
     node.addEventListener("click", () => run(action));
     return node;
   }
-  function ask(title, description, value) {
+  function ask(title, description, value, files = []) {
     const dialog = $("action-dialog"), input = $("action-input");
     $("action-title").textContent = title; $("action-description").textContent = description;
+    $("action-files").replaceChildren(...files.map((name) => el("li", name))); $("action-files").hidden = !files.length;
     input.hidden = value === undefined; input.required = value !== undefined; input.value = value ?? "";
     dialog.returnValue = "";
     return new Promise((resolve) => {
@@ -221,19 +225,79 @@
     card.append(head, dialogue(sample), actions);
     return card;
   }
-  function resetUpload() {
-    state.file = null; $("file").value = ""; $("filename").textContent = "尚未选择文件";
-    $("content").value = ""; clearPreview();
-  }
-  function chooseFile(file) {
-    if (!file) return;
-    resetUpload();
-    if (!current()) throw new Error("请先选择一个目标群。");
-    if (!/\.(json|jsonl|txt|md)$/i.test(file.name)) throw new Error("请选择 JSON、JSONL、TXT 或 Markdown 文件。");
-    if (file.size > 2 * 1024 * 1024) throw new Error("单个文件最多 2 MiB。");
-    state.file = file;
-    $("filename").textContent = `${file.name} · ${(file.size / 1024).toFixed(1)} KiB · 尚未上传，点击预览继续`;
+  const supportedFile = (file) => /\.(json|jsonl|txt|md)$/i.test(file.name);
+  function renderQueue() {
+    $("file-queue").replaceChildren(...state.files.map((item) => {
+      const row = el("div", undefined, "queued-file"), checkbox = el("input"), description = el("div");
+      checkbox.type = "checkbox"; checkbox.checked = item.included;
+      checkbox.setAttribute("aria-label", `纳入本次学习：${item.name}`);
+      if (item.status === "done") { checkbox.disabled = true; checkbox.dataset.unavailable = "true"; }
+      checkbox.addEventListener("change", () => { item.included = checkbox.checked; aggregatePreview(); renderQueue(); });
+      description.append(el("strong", item.name));
+      const labels = { selected: "尚未上传 · 等待预览", uploading: "正在上传并预览…", parsed: `预览通过 · ${item.preview?.total || 0} 条`, error: `未导入：${item.error || "请重新预览"}`, done: `已导入 · 新增 ${item.added || 0}，重复 ${item.duplicates || 0}` };
+      description.append(el("small", `${(item.file.size / 1024).toFixed(1)} KiB · ${labels[item.status]}`));
+      const remove = el("button", "移出本次", "link-button"); remove.type = "button";
+      remove.addEventListener("click", () => { state.files = state.files.filter((other) => other.id !== item.id); aggregatePreview(); renderQueue(); });
+      row.append(checkbox, description, remove); return row;
+    }));
+    const selected = state.files.filter((item) => item.included && item.status !== "done");
+    $("filename").textContent = state.files.length ? `清单 ${state.files.length} 个文件，勾选 ${selected.length} 个，合计 ${(selected.reduce((sum, item) => sum + item.file.size, 0) / 1024).toFixed(1)} KiB${selected.some((item) => item.status === "selected") ? " · 尚未上传，点击预览继续" : ""}` : "尚未选择文件";
     lockControls();
+  }
+  function aggregatePreview() {
+    clearPreview();
+    const selected = state.files.filter((item) => item.included && item.status !== "done");
+    if (!selected.length || selected.some((item) => item.status !== "parsed" || !item.preview)) return;
+    showPreview({ batch: true, files: selected.map((item) => item.id), mode: state.mode,
+      total: selected.reduce((sum, item) => sum + item.preview.total, 0),
+      examples: selected.flatMap((item) => item.preview.examples.map((example) => ({ ...example, source_label: example.source_label || item.name }))).slice(0, 5),
+      label: `${selected.length} 个文件`, details: { format: "batch" },
+    });
+  }
+  function resetUpload() {
+    state.files = []; $("file").value = ""; $("folder").value = "";
+    $("content").value = ""; clearPreview(); renderQueue();
+  }
+  function chooseFiles(picked) {
+    if (!picked.length) return;
+    if (picked.length > 5000) throw new Error("文件夹项目过多，尚未加入清单，请选择其中的子文件夹。");
+    if (!current()) throw new Error("请先选择一个目标群。");
+    const files = picked.map((item) => item.file ? item : { file: item, name: item.webkitRelativePath || item.name });
+    const supported = files.filter((item) => supportedFile(item.file));
+    if (!supported.length) throw new Error("没有找到 TXT、Markdown、JSON 或 JSONL 记录文件，尚未上传。");
+    if (supported.some((item) => item.file.size > 2 * 1024 * 1024)) throw new Error("有文件超过 2 MiB，尚未上传，请拆分后重新选择。");
+    const merged = state.files.filter((item) => item.status !== "done");
+    for (const item of supported) {
+      if (merged.some((old) => old.name === item.name && old.file.size === item.file.size && old.file.lastModified === item.file.lastModified)) continue;
+      merged.push({ ...item, id: ++state.nextFileId, included: true, status: "selected", preview: null });
+    }
+    if (merged.length > 50 || merged.reduce((sum, item) => sum + item.file.size, 0) > 20 * 1024 * 1024) throw new Error("每批最多 50 个文件、合计 20 MiB。此次选择未加入清单，请选择较小的文件夹或分批投喂。");
+    state.files = merged; $("content").value = "";
+    aggregatePreview(); renderQueue();
+    if (files.length > supported.length) notify(`已跳过 ${files.length - supported.length} 个不支持格式的文件；没有上传它们。`);
+  }
+  async function readDroppedEntries(entries, fallbackFiles) {
+    if (!entries.some((item) => item.entry)) return fallbackFiles;
+    const picked = []; let inspected = 0;
+    async function visit(entry, prefix = "") {
+      if (!entry) return;
+      if (++inspected > 5000) throw new Error("文件夹项目过多，尚未加入清单，请选择其中的子文件夹。");
+      if (entry.isFile) {
+        const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+        picked.push({ file, name: prefix + entry.name });
+        if (picked.filter((item) => supportedFile(item.file)).length > 50) throw new Error("文件夹中支持的记录文件超过 50 个，尚未加入清单，请分批选择。");
+      } else if (entry.isDirectory) {
+        const reader = entry.createReader();
+        // Chromium may return directories in chunks of 100 entries.
+        while (true) {
+          const children = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+          if (!children.length) break;
+          for (const child of children) await visit(child, prefix + entry.name + "/");
+        }
+      }
+    }
+    for (const item of entries) { if (item.entry) await visit(item.entry); else if (item.file) picked.push(item.file); }
+    return picked;
   }
   function setMode(mode) {
     state.mode = mode; resetUpload();
@@ -258,33 +322,77 @@
     renderState(); if (state.tab === "library") run(loadSamples); if (state.tab === "knowledge") run(loadKnowledge);
     $("knowledge-results").replaceChildren();
   });
-  $("file").addEventListener("change", () => run(async () => chooseFile($("file").files[0])));
+  $("file").addEventListener("change", () => { const files = [...$("file").files]; $("file").value = ""; run(async () => chooseFiles(files)); });
+  $("folder").addEventListener("change", () => { const files = [...$("folder").files]; $("folder").value = ""; run(async () => chooseFiles(files)); });
+  $("choose-folder").addEventListener("click", () => $("folder").click());
   $("preview-file").addEventListener("click", () => run(async () => {
-    if (!state.file) throw new Error("请先选择文件");
     clearPreview();
-    showPreview(await bridge.upload(path(knowledgeMode() ? "preview-knowledge-file" : "preview-file"), state.file));
+    const selected = state.files.filter((item) => item.included && item.status !== "done");
+    if (!selected.length) throw new Error("请先勾选文件");
+    for (const item of selected) {
+      if (item.status === "parsed" && item.preview && Date.now() - item.previewedAt < 14 * 60 * 1000) continue;
+      item.status = "uploading"; renderQueue();
+      try {
+        item.preview = await bridge.upload(path(knowledgeMode() ? "preview-knowledge-file" : "preview-file"), item.file);
+        item.status = "parsed"; item.previewedAt = Date.now(); item.error = "";
+      } catch (error) {
+        item.status = "error"; item.error = error.message || "预览失败"; item.preview = null; item.included = false;
+      }
+      renderQueue();
+    }
+    aggregatePreview(); renderQueue();
+    const failed = selected.filter((item) => item.status === "error").length;
+    if (failed) notify(`${failed} 个文件预览失败，已取消勾选，未导入。可以先确认其他文件，或重新勾选失败文件后预览。`, true);
   }));
   $("cancel-upload").addEventListener("click", resetUpload);
   const drop = $("dropzone");
   drop.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); if (!$("file").disabled) $("file").click(); } });
   for (const name of ["dragover", "dragleave", "drop"]) drop.addEventListener(name, (event) => {
     event.preventDefault(); drop.classList.toggle("dragover", name === "dragover");
-    if (name === "drop" && state.connected) run(async () => chooseFile(event.dataTransfer.files[0]));
+    if (name === "drop" && state.connected && !state.busy) {
+      const entries = [...(event.dataTransfer.items || [])].filter((item) => item.kind !== "string").map((item) => ({ entry: item.webkitGetAsEntry?.() || null, file: item.getAsFile?.() || null }));
+      const files = [...event.dataTransfer.files];
+      run(async () => chooseFiles(await readDroppedEntries(entries, files)));
+    }
   });
   $("preview-text").addEventListener("click", () => run(async () => {
     clearPreview(); showPreview(await bridge.apiPost(path(knowledgeMode() ? "preview-knowledge-text" : "preview-text"), { content: $("content").value, format: $("format").value }));
   }));
-  $("content").addEventListener("input", clearPreview);
+  $("content").addEventListener("input", () => { state.files = []; renderQueue(); clearPreview(); });
   $("format").addEventListener("change", clearPreview);
   $("enter-expression").addEventListener("click", () => setMode("expression"));
   $("enter-environment").addEventListener("click", () => setMode("knowledge"));
   $("commit").addEventListener("click", () => run(async () => {
     if (!state.preview || state.preview.groupId !== state.selected) throw new Error("目标群已改变，请重新预览。");
     const preview = state.preview, mode = preview.mode;
-    const confirmation = await ask("确认开始学习？", `目标群：${groupName(current())}；入口：${mode === "knowledge" ? "熟悉工作环境" : "教它怎么说话"}；文件：${preview.label}；共 ${preview.total} 条。${mode === "knowledge" ? "确认后进入待审核区，审核通过才会使用。" : "确认后这些表达样例将用于回复参考。"}传错了请取消并更换文件。`);
+    const selected = preview.batch ? preview.files.map((id) => state.files.find((item) => item.id === id)) : [];
+    const names = preview.batch ? selected.map((item) => item.name) : [preview.label];
+    const confirmation = await ask("确认开始学习？", `目标群：${groupName(current())}；入口：${mode === "knowledge" ? "熟悉工作环境" : "教它怎么说话"}；所选 ${names.length} 个文件 / 来源，共 ${preview.total} 条。${mode === "knowledge" ? "确认后进入待审核区，审核通过才会使用。" : "确认后这些表达样例将用于回复参考。"}只导入下列文件；传错了请取消。`, undefined, names);
     if (!confirmation.confirmed) return;
-    const result = await bridge.apiPost(path("commit"), { token: preview.token, confirmed: true });
-    resetUpload(); await loadState(); notify(`导入完成：新增 ${result.added} 条${mode === "knowledge" ? "待审知识，请到工作环境知识库审核" : "表达"}，跳过重复 ${result.duplicates} 条。`);
+    if (!preview.batch) {
+      const result = await bridge.apiPost(path("commit"), { token: preview.token, confirmed: true });
+      resetUpload(); await loadState(); notify(`导入完成：新增 ${result.added} 条${mode === "knowledge" ? "待审知识，请到工作环境知识库审核" : "表达"}，跳过重复 ${result.duplicates} 条。`);
+      return;
+    }
+    let result;
+    try { result = await bridge.apiPost(path("commit-batch"), { tokens: selected.map((item) => item.preview.token), confirmed: true }); }
+    catch (error) {
+      for (const item of selected) { item.status = "error"; item.error = "结果未确认，请重新预览后重试；重复内容会跳过"; item.preview = null; }
+      clearPreview(); renderQueue(); await loadState(); throw error;
+    }
+    for (const response of result.items) {
+      const item = selected.find((file) => file.preview?.token === response.token);
+      if (!item) continue;
+      item.preview = null;
+      if (response.status === "ok") { item.status = "done"; item.included = false; item.added = response.added; item.duplicates = response.duplicates; }
+      else { item.status = "error"; item.error = response.error; }
+    }
+    clearPreview(); renderQueue(); await loadState();
+    const succeeded = result.items.filter((item) => item.status === "ok").length;
+    $("batch-result").hidden = false;
+    $("batch-result").textContent = `已完成 ${succeeded}/${result.items.length} 个文件：新增 ${result.added} 条，跳过重复 ${result.duplicates} 条。${mode === "knowledge" ? "环境知识需到知识库审核。" : ""}${succeeded < result.items.length ? "失败文件未导入，请在左侧重新预览后重试。" : "文件结果保留在左侧，方便核对。"}`;
+    notify($("batch-result").textContent, succeeded < result.items.length);
+
   }));
   $("refresh").addEventListener("click", () => run(async () => { await loadState(true); if (state.tab === "library") await loadSamples(); if (state.tab === "knowledge") await loadKnowledge(); }));
   $("template").addEventListener("click", () => run(() => bridge.download("panel/template", { mode: knowledgeMode() ? "knowledge" : "expression" }, knowledgeMode() ? "auto-parts-knowledge.json" : "dialogues.json")));

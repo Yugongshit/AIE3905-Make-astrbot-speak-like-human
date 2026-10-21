@@ -95,7 +95,7 @@ def main():
                     )
                     frame.locator("#preview-file").click()
                     expect(frame.locator("#preview-summary")).to_contain_text(
-                        "识别到 1 组", timeout=10000
+                        "共 1 条", timeout=10000
                     )
                     expect(frame.locator("#commit")).to_be_enabled()
                     frame.locator("#commit").click()
@@ -184,7 +184,7 @@ def main():
                     )
                     frame.locator("#preview-file").click()
                     expect(frame.locator("#preview-summary")).to_contain_text(
-                        "提取 4 条待审环境知识", timeout=10000
+                        "共 4 条", timeout=10000
                     )
                     assert "原厂777" not in frame.locator("#preview").inner_text()
                     frame.locator("#commit").click()
@@ -312,9 +312,131 @@ def main():
                     assert len(onebot_options) == 2
                     assert any("12345" in label for label in onebot_options)
                     assert any("67890" in label for label in onebot_options)
+                    # A real folder picker traverses nested directories and leaves
+                    # invalid files out of the final confirmation, without auto-upload.
+                    folder = Path(runtime) / "批量演示"
+                    (folder / "子目录").mkdir(parents=True)
+                    (folder / "a.json").write_text(
+                        json.dumps([{"question": "文件夹问题甲", "answer": "文件夹回复甲"}]),
+                        encoding="utf-8",
+                    )
+                    (folder / "子目录/b.txt").write_text(
+                        "问：文件夹问题乙\n答：文件夹回复乙", encoding="utf-8"
+                    )
+                    (folder / "broken.json").write_text("broken JSON", encoding="utf-8")
+                    (folder / "ignored.csv").write_text("not a supported record", encoding="utf-8")
+                    uploads = []
+                    page.on(
+                        "request",
+                        lambda req: (
+                            uploads.append(req.url)
+                            if req.method == "POST" and "preview-" in req.url
+                            else None
+                        ),
+                    )
+                    frame.locator("[data-tab=feed]").click()
+                    frame.locator("#enter-expression").click()
+                    before = int(frame.locator("#metric-active").inner_text())
+                    frame.locator("#folder").set_input_files(str(folder))
+                    expect(frame.locator("#file-queue .queued-file")).to_have_count(3)
+                    expect(frame.locator("#file-queue")).to_contain_text("子目录/b.txt")
+                    expect(frame.locator("#filename")).to_contain_text("尚未上传")
+                    expect(frame.locator("#commit")).to_be_disabled()
+                    assert not uploads
+                    frame.locator("#preview-file").click()
+                    expect(frame.locator("#preview-summary")).to_contain_text(
+                        "已预览 2 个所选文件，共 2 条", timeout=10000
+                    )
+                    expect(frame.locator("#file-queue")).to_contain_text("未导入")
+                    expect(frame.locator("#metric-active")).to_have_text(str(before))
+                    frame.locator("#commit").click()
+                    expect(frame.locator("#action-files li")).to_have_count(2)
+                    assert "broken.json" not in frame.locator("#action-files").inner_text()
+                    frame.locator("#action-dialog button[value=cancel]").click()
+                    expect(frame.locator("#metric-active")).to_have_text(str(before))
+                    frame.locator("#commit").click()
+                    frame.locator("#action-dialog button[value=confirm]").click()
+                    expect(frame.locator("#metric-active")).to_have_text(
+                        str(before + 2), timeout=10000
+                    )
+                    expect(frame.locator("#batch-result")).to_contain_text("已完成 2/2 个文件")
+                    expect(frame.locator("#file-queue")).to_contain_text("已导入")
+                    bulk_page = browser.new_page(viewport={"width": 1440, "height": 1700})
+                    bulk_page.goto(f"http://127.0.0.1:{port}/test-host")
+                    bulk_frame = bulk_page.frame_locator("iframe")
+                    expect(bulk_frame.locator("#target")).to_be_enabled(timeout=20000)
+                    bulk_frame.locator("#enter-expression").click()
+                    bulk_frame.locator("#folder").set_input_files(str(folder))
+                    bulk_frame.locator("#preview-file").click()
+                    expect(bulk_frame.locator("#preview-summary")).to_contain_text(
+                        "共 2 条", timeout=10000
+                    )
+                    bulk_page.evaluate(
+                        "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
+                    )
+                    bulk_page.screenshot(
+                        path=str(args.artifacts / "batch-folder-panel-0.4.2.png"), full_page=True
+                    )
+                    bulk_frame.locator("#commit").click()
+                    expect(bulk_frame.locator("#action-files li")).to_have_count(2)
+                    bulk_page.screenshot(
+                        path=str(args.artifacts / "batch-confirmation-0.4.2.png"), full_page=True
+                    )
+                    bulk_frame.locator("#action-dialog button[value=cancel]").click()
+                    bulk_page.close()
+                    page.bring_to_front()
+                    # Multiple selection plus removing one item must import only
+                    # the remaining file, rather than a stale aggregate preview.
+                    frame.locator("#cancel-upload").click()
+                    frame.locator("#file").set_input_files(
+                        [
+                            {
+                                "name": "keep.json",
+                                "mimeType": "application/json",
+                                "buffer": json.dumps(
+                                    [{"question": "多选问题甲", "answer": "多选回复甲"}]
+                                ).encode(),
+                            },
+                            {
+                                "name": "remove.json",
+                                "mimeType": "application/json",
+                                "buffer": json.dumps(
+                                    [{"question": "多选问题乙", "answer": "多选回复乙"}]
+                                ).encode(),
+                            },
+                        ]
+                    )
+                    expect(frame.locator("#file-queue .queued-file")).to_have_count(2)
+                    frame.locator("#preview-file").click()
+                    expect(frame.locator("#preview-summary")).to_contain_text("共 2 条")
+                    frame.locator(".queued-file").filter(has_text="remove.json").get_by_role(
+                        "button", name="移出本次"
+                    ).click()
+                    expect(frame.locator("#preview-summary")).to_contain_text("共 1 条")
+                    frame.locator("#commit").click()
+                    expect(frame.locator("#action-files li")).to_have_text(["keep.json"])
+                    frame.locator("#action-dialog button[value=confirm]").click()
+                    expect(frame.locator("#metric-active")).to_have_text(
+                        str(before + 3), timeout=10000
+                    )
+                    # Exercise drag-and-drop directory APIs including chunked
+                    # readEntries results. OS folder drag is not exposed by Playwright.
+                    frame.locator("#cancel-upload").click()
+                    frame.locator("#dropzone").evaluate("""node => {
+                      const file = name => ({isFile:true,isDirectory:false,name,file:cb=>cb(new File(['问：拖入问题\\n答：拖入回复'],name,{type:'text/plain'}))});
+                      const directory = (name, chunks) => ({isFile:false,isDirectory:true,name,createReader:()=>{let index=0;return {readEntries:cb=>cb(chunks[index++]||[])}}});
+                      const tree = directory('拖入目录', [[file('a.txt')],[directory('嵌套',[[file('b.txt')]])]]);
+                      const loose = new File(['问：单独拖入问题\\n答：单独拖入回复'],'loose.txt',{type:'text/plain'});
+                      const event = new Event('drop',{bubbles:true,cancelable:true});
+                      Object.defineProperty(event,'dataTransfer',{value:{items:[{webkitGetAsEntry:()=>tree},{kind:'file',webkitGetAsEntry:()=>null,getAsFile:()=>loose}],files:[loose]}});
+                      node.dispatchEvent(event);
+                    }""")
+                    expect(frame.locator("#file-queue .queued-file")).to_have_count(3)
+                    expect(frame.locator("#file-queue")).to_contain_text("拖入目录/嵌套/b.txt")
+                    expect(frame.locator("#commit")).to_be_disabled()
                     assert not errors, errors
                     print(
-                        "Browser checks passed: sandboxed bridge, expression and raw auto-parts imports, group controls, knowledge approval/query, edit re-review, export, deletion, text-only rendering, reload persistence and mobile layout."
+                        "Browser checks passed: sandboxed bridge, multiple-file and nested-folder selection, chunked folder drop, explicit confirmation, invalid-file exclusion, per-file results, group identity repair, expression and knowledge learning, mobile layout."
                     )
                 finally:
                     browser.close()

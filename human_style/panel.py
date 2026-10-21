@@ -3,6 +3,7 @@
 import asyncio
 import functools
 import secrets
+import sqlite3
 import threading
 import time
 from collections import OrderedDict
@@ -17,6 +18,10 @@ from .knowledge import make_entry, parse_knowledge
 from .records import MAX_BYTES, parse_records
 
 PLUGIN = "astrbot_plugin_human_style"
+MAX_BATCH_FILES = 50
+MAX_BATCH_BYTES = 20 * 1024 * 1024
+MAX_BATCH_RECORDS = 10000
+MAX_PREVIEW_CACHE_BYTES = 32 * 1024 * 1024
 
 
 def endpoint(function):
@@ -62,6 +67,7 @@ class LearningPanel:
             ("groups/<group_id>/preview-file", self.preview_file, ["POST"]),
             ("groups/<group_id>/preview-text", self.preview_text, ["POST"]),
             ("groups/<group_id>/commit", self.commit, ["POST"]),
+            ("groups/<group_id>/commit-batch", self.commit_batch, ["POST"]),
             ("groups/<group_id>/samples", self.samples, ["GET"]),
             ("groups/<group_id>/sample", self.sample_action, ["POST"]),
             ("groups/<group_id>/export", self.export, ["GET"]),
@@ -129,7 +135,7 @@ class LearningPanel:
             del group["scope"]
         return {
             "groups": groups,
-            "version": "0.4.1",
+            "version": "0.4.2",
             "identity_notice": self.plugin.identity_notice,
         }
 
@@ -217,13 +223,19 @@ class LearningPanel:
         else:
             examples, details = parse_records(content, suffix), {}
         token = secrets.token_urlsafe(24)
+        cost = sum(len(str(asdict(example)).encode("utf-8")) for example in examples)
+        metadata = {"bytes": len(content.encode("utf-8")), "cost": cost}
         with self._lock:
             now = time.monotonic()
             self._previews = OrderedDict(
                 (key, val) for key, val in self._previews.items() if val[0] > now
             )
-            self._previews[token] = (now + 900, scope, examples, label, owner, mode)
-            while len(self._previews) > 20:
+            self._previews[token] = (now + 900, scope, examples, label, owner, mode, metadata)
+            while (
+                len(self._previews) > 100
+                or sum(item[6]["cost"] for item in self._previews.values())
+                > MAX_PREVIEW_CACHE_BYTES
+            ):
                 self._previews.popitem(last=False)
         return {
             "token": token,
@@ -283,22 +295,71 @@ class LearningPanel:
         )
         return {"status": "ok", "data": data}
 
-    def _commit(self, scope, token, owner):
+    def _checked_preview(self, scope, token, owner):
         if not isinstance(token, str):
             raise ValueError("请先预览要导入的记录")
+        preview = self._previews.get(token)
+        if not preview or preview[0] < time.monotonic():
+            self._previews.pop(token, None)
+            raise ValueError("预览已过期或已经导入，请重新预览")
+        if preview[1] != scope or preview[4] != owner:
+            raise ValueError("目标群或操作账号已改变，请重新预览")
+        return preview
+
+    def _write_preview(self, scope, token, preview):
+        if preview[5] == "knowledge":
+            added = self.knowledge.add(scope, preview[2], preview[3])
+        else:
+            added = self.memory.add(scope, preview[2], "panel", import_label=preview[3])
+        del self._previews[token]
+        return {"added": added, "duplicates": len(preview[2]) - added}
+
+    def _commit(self, scope, token, owner):
         with self._lock:
-            preview = self._previews.get(token)
-            if not preview or preview[0] < time.monotonic():
-                self._previews.pop(token, None)
-                raise ValueError("预览已过期或已经导入，请重新预览")
-            if preview[1] != scope or preview[4] != owner:
-                raise ValueError("目标群或操作账号已改变，请重新预览")
-            if preview[5] == "knowledge":
-                added = self.knowledge.add(scope, preview[2], preview[3])
-            else:
-                added = self.memory.add(scope, preview[2], "panel", import_label=preview[3])
-            del self._previews[token]
-            return {"added": added, "duplicates": len(preview[2]) - added}
+            return self._write_preview(scope, token, self._checked_preview(scope, token, owner))
+
+    def _commit_batch(self, scope, tokens, owner):
+        if (
+            not isinstance(tokens, list)
+            or not 1 <= len(tokens) <= MAX_BATCH_FILES
+            or any(not isinstance(token, str) for token in tokens)
+            or len(set(tokens)) != len(tokens)
+        ):
+            raise ValueError("请选择 1–50 个已预览文件，不要重复提交同一个文件")
+        with self._lock:
+            # Validate the complete selection before writing any of its files.
+            previews = [self._checked_preview(scope, token, owner) for token in tokens]
+            if len({preview[5] for preview in previews}) != 1:
+                raise ValueError("同一批文件必须使用相同的学习入口")
+            if sum(preview[6]["bytes"] for preview in previews) > MAX_BATCH_BYTES:
+                raise ValueError("每批文件合计最多 20 MiB，请移除部分文件后分批导入")
+            if sum(len(preview[2]) for preview in previews) > MAX_BATCH_RECORDS:
+                raise ValueError("每批最多 10000 条学习记录，请移除部分文件后分批导入")
+            items = []
+            for token, preview in zip(tokens, previews, strict=True):
+                try:
+                    items.append(
+                        {
+                            "token": token,
+                            "status": "ok",
+                            **self._write_preview(scope, token, preview),
+                        }
+                    )
+                except (ValueError, OSError, sqlite3.Error) as exc:
+                    items.append(
+                        {
+                            "token": token,
+                            "status": "error",
+                            "error": str(exc)
+                            if isinstance(exc, ValueError)
+                            else "写入未完成，请重新预览此文件后重试",
+                        }
+                    )
+            return {
+                "items": items,
+                "added": sum(item.get("added", 0) for item in items),
+                "duplicates": sum(item.get("duplicates", 0) for item in items),
+            }
 
     @endpoint
     async def commit(self, group_id):
@@ -308,6 +369,17 @@ class LearningPanel:
             raise ValueError("请核对目标群、学习入口和预览内容，再点击确认学习")
         data = await asyncio.to_thread(
             self._commit, group["scope"], body.get("token"), request.username
+        )
+        return {"status": "ok", "data": data}
+
+    @endpoint
+    async def commit_batch(self, group_id):
+        group = await asyncio.to_thread(self._group, group_id)
+        body = await self._body()
+        if body.get("confirmed") is not True:
+            raise ValueError("请核对所选文件、目标群和学习入口，再点击确认批量学习")
+        data = await asyncio.to_thread(
+            self._commit_batch, group["scope"], body.get("tokens"), request.username
         )
         return {"status": "ok", "data": data}
 

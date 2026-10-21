@@ -1,7 +1,7 @@
 name: astrbot_plugin_human_style
 display_name: 好好说话 · 表达学习
-desc: '双入口学习：教它说话 / 熟悉汽配工作环境。选文件后手动预览、再次确认；环境概念审核后生效。入口：插件可视化视图 → 表达学习控制台。'
-version: v0.4.1
+desc: '双入口学习：教它说话 / 熟悉汽配工作环境。支持多文件与文件夹批量投喂，先预览再确认，环境概念审核后生效。入口：插件可视化视图 → 表达学习控制台。'
+version: v0.4.2
 author: Yugongshit
 repo: https://github.com/Yugongshit/AIE3905-Make-astrbot-speak-like-human
 astrbot_version: '>=4.29.1,<5'

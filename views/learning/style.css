@@ -11,3 +11,13 @@
 .learning-entrance.selected { border-color:#3766ed; background:rgba(55,102,237,.07); }
 .mode-help { line-height:1.7; padding:12px; border-radius:10px; background:rgba(55,102,237,.05); }
 @media(max-width:640px) { .learning-entrances { grid-template-columns:1fr; } }
+
+.file-queue { max-height:300px; overflow:auto; margin-top:12px; }
+.queued-file { display:flex; gap:10px; align-items:center; padding:10px 0; border-bottom:1px solid var(--line); }
+.queued-file > div { flex:1; min-width:0; }
+.queued-file strong { display:block; font-size:12px; overflow-wrap:anywhere; }
+.queued-file small { display:block; color:var(--muted); font-size:11px; overflow-wrap:anywhere; }
+.queued-file > input { flex:none; }
+.queued-file .link-button { flex:none; }
+.confirmation-files { max-height:180px; overflow:auto; padding-left:20px; font-size:12px; overflow-wrap:anywhere; }
+#folder-hint { font-size:12px; }
