@@ -2,7 +2,6 @@
 
 import asyncio
 import functools
-import json
 import secrets
 import threading
 import time
@@ -13,6 +12,7 @@ from pathlib import Path
 from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 
+from .identity import scope_key
 from .knowledge import make_entry, parse_knowledge
 from .records import MAX_BYTES, parse_records
 
@@ -109,6 +109,7 @@ class LearningPanel:
         return body
 
     def _state(self):
+        self.plugin.reconcile_groups()
         groups = self.memory.groups()
         default = bool(self.plugin.config.get("collect_candidates", False))
         for group in groups:
@@ -126,7 +127,11 @@ class LearningPanel:
                 self.plugin.config.get("knowledge_enabled", True)
             )
             del group["scope"]
-        return {"groups": groups, "version": "0.4.0"}
+        return {
+            "groups": groups,
+            "version": "0.4.1",
+            "identity_notice": self.plugin.identity_notice,
+        }
 
     @endpoint
     async def state(self):
@@ -160,7 +165,7 @@ class LearningPanel:
                     if not isinstance(group, dict) or not group.get("group_id"):
                         continue
                     group_id = str(group["group_id"])
-                    scope = json.dumps([meta.id, bot_id, "group", group_id], ensure_ascii=False)
+                    scope = scope_key(meta.id, bot_id, "group", group_id)
                     await asyncio.to_thread(
                         self.memory.remember_group,
                         scope,

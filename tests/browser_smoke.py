@@ -269,6 +269,49 @@ def main():
                     expect(frame.locator("#knowledge-items")).to_contain_text(
                         "大灯总成与灯壳要分别确认", timeout=10000
                     )
+                    # Reproduce QQ's mention-dependent self_id directory duplication.
+                    scope_key = sys.modules[spec.name + ".human_style.identity"].scope_key
+                    Example = sys.modules[spec.name + ".human_style.records"].Example
+
+                    for bot, style in [("qq_official", False), ("mention-user-123", True)]:
+                        scope = scope_key("default_1900000000", bot, "group", "QQ-SAME-GROUP")
+                        plugin.learning.memory.remember_group(
+                            scope,
+                            "default_1900000000",
+                            bot,
+                            "QQ-SAME-GROUP",
+                            platform_name="qq_official",
+                        )
+                        plugin.learning.memory.add(
+                            scope, [Example("问题" + bot, "保留的表达")], "manual"
+                        )
+                        plugin.learning.memory.set_style(scope, style)
+                    frame.locator("#refresh").click()
+                    expect(frame.locator("#metric-groups")).to_have_text("3", timeout=10000)
+                    options = frame.locator("#target option").all_text_contents()
+                    assert sum("QQ-SAME-GROUP" in label for label in options) == 1
+                    expect(frame.locator("#metric-active")).to_have_text("2")
+                    expect(frame.locator("#notice")).to_contain_text("合并 1 条重复群记录")
+                    # Distinct OneBot accounts in the same group must not be merged
+                    # or displayed as identical dropdown choices.
+                    for bot in ("12345", "67890"):
+                        scope = scope_key("onebot-case", bot, "group", "same-onebot-group")
+                        plugin.learning.memory.remember_group(
+                            scope,
+                            "onebot-case",
+                            bot,
+                            "same-onebot-group",
+                            "同名协作群",
+                            "aiocqhttp",
+                        )
+                    frame.locator("#refresh").click()
+                    expect(frame.locator("#metric-groups")).to_have_text("5", timeout=10000)
+                    options = frame.locator("#target option").all_text_contents()
+                    assert len(options) == len(set(options))
+                    onebot_options = [label for label in options if "同名协作群" in label]
+                    assert len(onebot_options) == 2
+                    assert any("12345" in label for label in onebot_options)
+                    assert any("67890" in label for label in onebot_options)
                     assert not errors, errors
                     print(
                         "Browser checks passed: sandboxed bridge, expression and raw auto-parts imports, group controls, knowledge approval/query, edit re-review, export, deletion, text-only rendering, reload persistence and mobile layout."

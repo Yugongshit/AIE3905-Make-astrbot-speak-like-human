@@ -340,6 +340,7 @@ class Knowledge:
         added = 0
         with self.memory._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            scope = self.memory._resolve_scope(db, scope)
             for entry in entries:
                 fingerprint = hashlib.sha256(
                     (
@@ -373,6 +374,7 @@ class Knowledge:
 
     def stats(self, scope: str) -> dict:
         with self.memory._connect() as db:
+            scope = self.memory._resolve_scope(db, scope)
             rows = db.execute(
                 "SELECT status,COUNT(*) n FROM knowledge WHERE scope=? GROUP BY status", (scope,)
             ).fetchall()
@@ -386,8 +388,9 @@ class Knowledge:
             raise ValueError("无效的知识状态")
         page = max(1, page)
         where = "scope=? AND status=? AND (instr(title,?)>0 OR instr(content,?)>0)"
-        args = (scope, status, query, query)
         with self.memory._connect() as db:
+            scope = self.memory._resolve_scope(db, scope)
+            args = (scope, status, query, query)
             total = db.execute(f"SELECT COUNT(*) FROM knowledge WHERE {where}", args).fetchone()[0]
             rows = db.execute(
                 f"SELECT * FROM knowledge WHERE {where} ORDER BY id DESC LIMIT 20 OFFSET ?",
@@ -402,6 +405,7 @@ class Knowledge:
         marks = ",".join("?" for _ in ids)
         with self.memory._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            scope = self.memory._resolve_scope(db, scope)
             count = db.execute(
                 f"SELECT COUNT(*) FROM knowledge WHERE scope=? AND id IN ({marks})", (scope, *ids)
             ).fetchone()[0]
@@ -431,6 +435,8 @@ class Knowledge:
         ):
             raise ValueError("有效期须为未来的时间")
         with self.memory._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            scope = self.memory._resolve_scope(db, scope)
             # Original evidence and type stay intact; editing also requires renewed approval.
             return bool(
                 db.execute(
@@ -455,6 +461,7 @@ class Knowledge:
         ranked = []
         limit = max(1, min(8, limit))
         with self.memory._connect() as db:
+            scope = self.memory._resolve_scope(db, scope)
             rows = db.execute(
                 "SELECT * FROM knowledge WHERE scope=? AND kind!='history' AND status='active' AND (expires IS NULL OR expires>?)",
                 (scope, time.time()),
@@ -481,6 +488,7 @@ class Knowledge:
 
     def export(self, scope: str) -> list[dict]:
         with self.memory._connect() as db:
+            scope = self.memory._resolve_scope(db, scope)
             return [
                 dict(row)
                 for row in db.execute("SELECT * FROM knowledge WHERE scope=? ORDER BY id", (scope,))

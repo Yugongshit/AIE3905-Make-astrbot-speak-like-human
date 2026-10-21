@@ -1,5 +1,5 @@
 import asyncio
-import json
+import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
@@ -10,6 +10,7 @@ from astrbot.api.message_components import File
 from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, Star, StarTools
 
+from .human_style.identity import QQ_OFFICIAL, parse_scope, qq_account, scope_key
 from .human_style.knowledge import KNOWLEDGE_MARKER, build_knowledge_prompt
 from .human_style.panel import LearningPanel
 from .human_style.prompts import MARKER, build_prompt
@@ -42,9 +43,13 @@ class HumanStylePlugin(Star):
         self.learning = LearningService(StarTools.get_data_dir("astrbot_plugin_human_style"))
         self._uploads: OrderedDict[tuple[str, str], float] = OrderedDict()
         self._last_replies: OrderedDict[str, tuple[str, str, float]] = OrderedDict()
+        self._identity_lock = threading.Lock()
+        self._identity_accounts: dict[str, str] = {}
+        self.identity_notice = ""
         self.panel = LearningPanel(self)
 
     async def initialize(self):
+        await asyncio.to_thread(self.reconcile_groups)
         self.panel.register()
 
     async def terminate(self):
@@ -52,19 +57,45 @@ class HumanStylePlugin(Star):
         self._uploads.clear()
         self._last_replies.clear()
 
-    @staticmethod
-    def scope(event: AstrMessageEvent) -> str:
-        # Group identity must not depend on AstrBot's per-member session isolation.
+    def official_accounts(self) -> dict[str, str]:
+        manager = getattr(self.context, "platform_manager", None)
+        if manager is None:
+            return {}
+        return {
+            str(adapter.meta().id): qq_account(
+                str(adapter.meta().id), getattr(adapter, "appid", None)
+            )
+            for adapter in manager.get_insts()
+            if adapter.meta().name in QQ_OFFICIAL
+        }
+
+    def reconcile_groups(self, observed: dict[str, str] | None = None):
+        with self._identity_lock:
+            accounts = {**self._identity_accounts, **self.official_accounts(), **(observed or {})}
+            result = self.learning.memory.reconcile_groups(accounts)
+            self._identity_accounts.update(accounts)
+            if result["moved"]:
+                self.identity_notice = (
+                    f"已整理群标识，合并 {result['merged']} 条重复群记录，学习内容已迁移并备份。"
+                    "如旧开关冲突，保留关闭状态，请核对群开关。"
+                )
+            return result
+
+    def scope(self, event: AstrMessageEvent) -> str:
+        # QQ's message self_id is mention-dependent, not an account identity.
+        platform = str(event.get_platform_id())
+        account = str(event.get_self_id())
+        if event.get_platform_name() in QQ_OFFICIAL:
+            account = self.official_accounts().get(platform) or qq_account(platform)
+            if self._identity_accounts.get(platform) != account:
+                self.reconcile_groups({platform: account})
         group = event.get_group_id()
-        return json.dumps(
-            [
-                event.get_platform_id(),
-                str(event.get_self_id()),
-                "group" if group else "private",
-                str(group or event.get_sender_id()),
-            ],
-            ensure_ascii=False,
+        return scope_key(
+            platform, account, "group" if group else "private", group or event.get_sender_id()
         )
+
+    def scope_account(self, event: AstrMessageEvent) -> str:
+        return parse_scope(self.scope(event))[1]
 
     def eligible(self, event: AstrMessageEvent) -> bool:
         if not self.config.get("enabled", True):
@@ -158,7 +189,7 @@ class HumanStylePlugin(Star):
                     self.learning.memory.remember_group,
                     self.scope(event),
                     event.get_platform_id(),
-                    str(event.get_self_id()),
+                    self.scope_account(event),
                     str(event.get_group_id()),
                     getattr(group, "group_name", None) or "",
                     event.get_platform_name(),

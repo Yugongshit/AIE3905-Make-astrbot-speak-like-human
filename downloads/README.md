@@ -1,6 +1,26 @@
 # 可直接分享的插件安装文件
 
-## 最新版 0.4.0：双入口学习与明确确认
+## 最新版 0.4.1：修复重复群登记
+
+**[下载 astrbot_plugin_human_style-0.4.1.zip](https://github.com/Yugongshit/AIE3905-Make-astrbot-speak-like-human/raw/refs/heads/main/downloads/astrbot_plugin_human_style-0.4.1.zip)**
+
+在 AstrBot“插件 → 从文件安装”选择 ZIP，不解压、不先卸载。重新加载插件并刷新页面，确认卡片显示 **v0.4.1**，再进入“插件可视化视图 → 表达学习控制台”，点击“刷新群列表”。
+
+QQ 官方的有 @ / 无 @ 消息可能提供不同的 self_id，旧版本会将同一群登记两次。本版使用稳定应用账号识别群，并自动迁移旧表达、知识与导入记录，保留非空备注。迁移前完整备份数据库；冲突开关保留关闭状态，不会因合并而自动启用待审或停用表达。
+
+不同平台或不同应用账号的数据仍然隔离。下拉框遇到同名群或不同机器人账号时，补充群号与账号信息，避免两个选项看起来完全一样。
+
+已通过 65 项测试及真实 AstrBot Web 接口的浏览器验证，包含重复群合并、重启持久化、失败回滚、跨账号隔离与下拉框区分。安装包不包含用户聊天或学习数据库。
+
+SHA-256：
+
+```text
+9c052809b908958bf4d8576e67ba09683bfe3d2760e6f47a94435403388879f9
+```
+
+[面板操作说明](../docs/panel.md)
+
+## 历史版本 0.4.0：双入口学习与明确确认
 
 **[下载 astrbot_plugin_human_style-0.4.0.zip](https://github.com/Yugongshit/AIE3905-Make-astrbot-speak-like-human/raw/refs/heads/main/downloads/astrbot_plugin_human_style-0.4.0.zip)**
 

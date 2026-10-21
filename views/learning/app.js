@@ -160,8 +160,12 @@
     for (const key of ["active", "pending"]) $("metric-" + key).textContent = groups.reduce((sum, group) => sum + group.counts[key], 0);
     $("metric-knowledge").textContent = groups.reduce((sum, group) => sum + (group.knowledge_counts?.active || 0), 0);
     $("knowledge-pending-count").textContent = `另有 ${groups.reduce((sum, group) => sum + (group.knowledge_counts?.pending || 0), 0)} 条知识待审核`;
-    $("target").replaceChildren(...(groups.length ? groups.map((group) => {
-      const option = el("option", `${groupName(group)} · ${group.platform_id}`);
+    const labels = groups.map((group) => `${groupName(group)} · ${group.platform_id}`);
+    $("target").replaceChildren(...(groups.length ? groups.map((group, index) => {
+      const label = labels[index];
+      const duplicateLabel = labels.filter((item) => item === label).length > 1;
+      const detail = duplicateLabel ? `${groupName(group) === group.group_id ? "" : ` · 群 ${group.group_id}`} · 机器人 ${group.bot_id}` : "";
+      const option = el("option", label + detail);
       option.value = String(group.id);
       return option;
     }) : [el("option", "暂未发现群，请让目标群发一条消息后刷新")]));
@@ -179,7 +183,7 @@
     renderState();
     if (refresh) {
       $("notice").className = "notice";
-      $("notice").textContent = data.notes?.length ? data.notes.join("\n") : "已连接。选择一个群，上传记录或管理学习开关。";
+      $("notice").textContent = [data.identity_notice, ...(data.notes || [])].filter(Boolean).join("\n") || "已连接。选择一个群，上传记录或管理学习开关。";
     }
   }
   async function loadSamples() {

@@ -481,3 +481,31 @@ def test_commit_requires_explicit_confirmation_without_consuming_preview(panel):
         )["added"]
         == 1
     )
+
+
+def test_panel_merges_legacy_qq_groups_and_reports_combined_counts(panel, plugin):
+    from human_style.identity import scope_key
+    from human_style.records import Example
+
+    client, headers, _ = panel
+    platform, group = "default_1900000000", "QQ-SAME-GROUP"
+    for bot in ("qq_official", "mention-user-123"):
+        scope = scope_key(platform, bot, "group", group)
+        plugin.learning.memory.remember_group(
+            scope, platform, bot, group, platform_name="qq_official"
+        )
+        plugin.learning.memory.add(scope, [Example("问题" + bot, "保留的表达")], "manual")
+    result = data(client.post(BASE + "/refresh", headers=headers(), json={}))
+    matching = [row for row in result["groups"] if row["group_id"] == group]
+    assert len(matching) == 1
+    assert matching[0]["counts"]["active"] == 2
+    assert matching[0]["bot_id"] == "qq-app:1900000000"
+    assert "合并 1 条重复群记录" in result["identity_notice"]
+    # Refreshing and changing settings keep the repaired library intact.
+    row_id = matching[0]["id"]
+    data(
+        client.post(f"{BASE}/groups/{row_id}/settings", headers=headers(), json={"collect": False})
+    )
+    result = data(client.get(BASE + "/state", headers=headers()))
+    matching = [row for row in result["groups"] if row["group_id"] == group]
+    assert len(matching) == 1 and matching[0]["collect"] is False
