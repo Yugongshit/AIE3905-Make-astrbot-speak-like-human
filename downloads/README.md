@@ -1,6 +1,28 @@
 # 可直接分享的插件安装文件
 
-## 最新版 0.3.0：汽配业务知识库
+## 最新版 0.4.0：双入口学习与明确确认
+
+**[下载 astrbot_plugin_human_style-0.4.0.zip](https://github.com/Yugongshit/AIE3905-Make-astrbot-speak-like-human/raw/refs/heads/main/downloads/astrbot_plugin_human_style-0.4.0.zip)**
+
+在 AstrBot“插件”页面选择 **从文件安装**，选择 ZIP，不解压、不先卸载旧版。更新后检查卡片显示 **v0.4.0**，刷新浏览器，从左侧 **插件可视化视图 → 表达学习控制台** 打开。
+
+- **教它怎么说话：**学习你认可的表达、语气与回应方式。
+- **熟悉工作环境：**提取汽配术语、别名、部件区别、流程和沟通规则。原始交易不再按历史片段写入知识库。
+- **先预览再确认：**选文件不会上传；点击预览后，确认学习时会再显示目标群、用途、文件和条数，传错可取消或换文件。环境候选还要审核才生效。
+
+0.3.0 已有的历史交易条目保留供查看、导出和删除，但停止用于回复。表达库和群开关保留。新别名与复杂流程可能无法被规则自动识别，可手动补充，审核后参与检索。
+
+安装包只含程序、说明及虚构素材，不含你上传的真实客户群聊或学习数据库。可以下载后转发文件，也可直接分享此链接。
+
+SHA-256：
+
+```text
+fe0ffee2eb8355129ffb6cd212755fc7910724765c4642808867d6fc75dafeba
+```
+
+[面板操作说明](../docs/panel.md) · [工作环境学习指南](../docs/auto-parts-knowledge.md) · [确认弹窗预览](../docs/images/learning-confirmation.png)
+
+## 历史版本 0.3.0：汽配业务知识库
 
 **[下载 astrbot_plugin_human_style-0.3.0.zip](https://github.com/Yugongshit/AIE3905-Make-astrbot-speak-like-human/raw/refs/heads/main/downloads/astrbot_plugin_human_style-0.3.0.zip)**
 

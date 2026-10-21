@@ -58,7 +58,7 @@ def main():
                 browser = playwright.chromium.launch(
                     executable_path=args.browser_path,
                     headless=True,
-                    args=["--no-sandbox"],
+                    args=["--no-sandbox", "--disable-gpu"],
                 )
                 try:
                     page = browser.new_page(
@@ -70,7 +70,7 @@ def main():
                     frame = page.frame_locator("iframe")
                     expect(frame.locator("#metric-groups")).to_have_text("2", timeout=20000)
                     expect(frame.locator("#target")).to_be_enabled()
-                    frame.locator("#learning-mode").select_option("expression")
+                    frame.locator("#enter-expression").click()
                     sample = [
                         {
                             "question": "怎么还没发货？",
@@ -84,14 +84,26 @@ def main():
                             "buffer": json.dumps(sample, ensure_ascii=False).encode(),
                         }
                     )
+                    # Selecting a file must not upload, parse, or write anything.
+                    expect(frame.locator("#filename")).to_contain_text("尚未上传")
+                    expect(frame.locator("#commit")).to_be_disabled()
+                    assert (
+                        plugin.learning.memory.stats(plugin.learning.memory.groups()[0]["scope"])[
+                            "active"
+                        ]
+                        == 0
+                    )
+                    frame.locator("#preview-file").click()
                     expect(frame.locator("#preview-summary")).to_contain_text(
                         "识别到 1 组", timeout=10000
                     )
                     expect(frame.locator("#commit")).to_be_enabled()
-                    page.screenshot(
-                        path=str(args.artifacts / "human-style-panel-0.3.0.png"), full_page=True
-                    )
                     frame.locator("#commit").click()
+                    expect(frame.locator("#action-description")).to_contain_text("教它怎么说话")
+                    frame.locator("#action-dialog button[value=cancel]").click()
+                    expect(frame.locator("#metric-active")).to_have_text("0")
+                    frame.locator("#commit").click()
+                    frame.locator("#action-dialog button[value=confirm]").click()
                     expect(frame.locator("#metric-active")).to_have_text("1", timeout=10000)
                     frame.locator("[data-tab=groups]").click()
                     first = frame.locator("#group-rows tr").first
@@ -139,6 +151,7 @@ def main():
                     frame.locator("[data-tab=feed]").click()
                     expect(frame.locator("#target")).to_be_visible()
                     assert frame.locator("body").evaluate("(e)=>e.scrollWidth <= window.innerWidth")
+                    frame.locator("#enter-expression").click()
                     frame.locator("#content").fill("问：收到没有？\n答：收到了，谢谢你。")
                     frame.locator("#preview-text").click()
                     expect(frame.locator("#preview")).to_contain_text("收到了，谢谢你。")
@@ -146,11 +159,11 @@ def main():
                     page.evaluate("window.scrollTo(0,0)")
                     expect(frame.locator(".brand")).to_be_in_viewport()
                     page.screenshot(
-                        path=str(args.artifacts / "human-style-panel-mobile-0.3.0.png"),
+                        path=str(args.artifacts / "human-style-panel-mobile-0.4.0.png"),
                         full_page=True,
                     )
                     page.set_viewport_size({"width": 1440, "height": 1100})
-                    frame.locator("#learning-mode").select_option("knowledge")
+                    frame.locator("#enter-environment").click()
                     chat = "示例汽配群\n\n2026-01-02 09:00:00 买家\n右前大灯，原厂有吗\n\n2026-01-02 09:01:00 卖家\n右前大灯 原厂777 订货2天\n\n2026-01-02 09:02:00 买家\n[media]\n"
                     frame.locator("#file").set_input_files(
                         {
@@ -159,25 +172,39 @@ def main():
                             "buffer": chat.encode(),
                         }
                     )
-                    expect(frame.locator("#preview-summary")).to_contain_text(
-                        "识别 2 条待审知识", timeout=10000
+                    expect(frame.locator("#commit")).to_be_disabled()
+                    frame.locator("#cancel-upload").click()
+                    expect(frame.locator("#filename")).to_have_text("尚未选择文件")
+                    frame.locator("#file").set_input_files(
+                        {
+                            "name": "示例汽配群.txt",
+                            "mimeType": "text/plain",
+                            "buffer": chat.encode(),
+                        }
                     )
+                    frame.locator("#preview-file").click()
+                    expect(frame.locator("#preview-summary")).to_contain_text(
+                        "提取 4 条待审环境知识", timeout=10000
+                    )
+                    assert "原厂777" not in frame.locator("#preview").inner_text()
                     frame.locator("#commit").click()
+                    expect(frame.locator("#action-description")).to_contain_text("熟悉工作环境")
+                    frame.locator("#action-dialog button[value=confirm]").click()
                     expect(frame.locator("#knowledge-pending-count")).to_contain_text(
-                        "2 条知识待审核", timeout=10000
+                        "4 条知识待审核", timeout=10000
                     )
                     expect(frame.locator("#metric-knowledge")).to_have_text("0")
                     frame.locator("[data-tab=knowledge]").click()
                     expect(frame.locator("#knowledge-items")).to_contain_text(
-                        "原厂777", timeout=10000
+                        "灯具的名称与组成", timeout=10000
                     )
                     frame.locator("#knowledge-select-all").check()
                     frame.locator("#knowledge-approve-selected").click()
                     frame.locator("#action-dialog button[value=confirm]").click()
-                    expect(frame.locator("#metric-knowledge")).to_have_text("2", timeout=10000)
+                    expect(frame.locator("#metric-knowledge")).to_have_text("4", timeout=10000)
                     frame.locator("#knowledge-status").select_option("active")
                     expect(frame.locator("#knowledge-items")).to_contain_text(
-                        "历史信息，不代表当前报价", timeout=10000
+                        "环境参考知识", timeout=10000
                     )
                     frame.locator("#knowledge-query").fill("大灯")
                     frame.locator("#knowledge-query-button").click()
@@ -189,32 +216,58 @@ def main():
                     expect(frame.locator(".brand")).to_be_in_viewport()
                     # Capture in a fresh viewport; resizing an opaque iframe can
                     # leave a transient blank compositor surface in headless Chromium.
-                    shot_page = browser.new_page(viewport={"width": 1440, "height": 1100})
+                    shot_page = browser.new_page(viewport={"width": 1440, "height": 1600})
                     shot_page.goto(f"http://127.0.0.1:{port}/test-host")
                     shot_frame = shot_page.frame_locator("iframe")
-                    expect(shot_frame.locator("#metric-knowledge")).to_have_text("2", timeout=20000)
+                    expect(shot_frame.locator("#metric-knowledge")).to_have_text("4", timeout=20000)
                     shot_frame.locator("[data-tab=knowledge]").click()
                     shot_frame.locator("#knowledge-status").select_option("active")
                     expect(shot_frame.locator("#knowledge-items")).to_contain_text(
-                        "原厂777", timeout=10000
+                        "灯具的名称与组成", timeout=10000
+                    )
+                    shot_page.evaluate(
+                        "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
                     )
                     shot_page.screenshot(
-                        path=str(args.artifacts / "auto-parts-knowledge-panel-0.3.0.png"),
+                        path=str(args.artifacts / "auto-parts-knowledge-panel-0.4.0.png"),
                         full_page=True,
                     )
+                    shot_frame.locator("[data-tab=feed]").click()
+                    shot_frame.locator("#enter-environment").click()
+                    shot_frame.locator("#content").fill("气门室盖也叫摇臂室盖。倒车镜不是镜片。")
+                    shot_frame.locator("#preview-text").click()
+                    expect(shot_frame.locator("#commit")).to_be_enabled()
+                    shot_frame.locator("body").evaluate("()=>window.scrollTo(0,0)")
+                    shot_page.bring_to_front()
+                    expect(shot_frame.locator("#commit")).to_be_in_viewport()
+                    shot_page.evaluate(
+                        "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
+                    )
+                    shot_page.screenshot(
+                        path=str(args.artifacts / "human-style-panel-0.4.0.png"), full_page=True
+                    )
+                    shot_frame.locator("#commit").click()
+                    expect(shot_frame.locator("#action-dialog")).to_be_visible()
+                    shot_page.evaluate(
+                        "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
+                    )
+                    shot_page.screenshot(
+                        path=str(args.artifacts / "learning-confirmation-0.4.0.png"), full_page=True
+                    )
+                    shot_frame.locator("#action-dialog button[value=cancel]").click()
                     shot_page.close()
                     frame.locator("#knowledge-items").get_by_role(
                         "button", name="修改", exact=True
                     ).first.click()
                     expect(frame.locator("#knowledge-kind")).to_be_disabled()
                     frame.locator("#knowledge-content").fill(
-                        "历史报价仅供回溯，当前请向供应商确认。"
+                        "大灯总成与灯壳要分别确认，不能混成同一个部件。"
                     )
                     frame.locator("#knowledge-edit-form button[type=submit]").click()
-                    expect(frame.locator("#metric-knowledge")).to_have_text("1", timeout=10000)
+                    expect(frame.locator("#metric-knowledge")).to_have_text("3", timeout=10000)
                     frame.locator("#knowledge-status").select_option("pending")
                     expect(frame.locator("#knowledge-items")).to_contain_text(
-                        "历史报价仅供回溯", timeout=10000
+                        "大灯总成与灯壳要分别确认", timeout=10000
                     )
                     assert not errors, errors
                     print(

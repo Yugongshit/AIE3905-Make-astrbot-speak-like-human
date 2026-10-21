@@ -126,7 +126,7 @@ class LearningPanel:
                 self.plugin.config.get("knowledge_enabled", True)
             )
             del group["scope"]
-        return {"groups": groups, "version": "0.3.0"}
+        return {"groups": groups, "version": "0.4.0"}
 
     @endpoint
     async def state(self):
@@ -299,6 +299,8 @@ class LearningPanel:
     async def commit(self, group_id):
         group = await asyncio.to_thread(self._group, group_id)
         body = await self._body()
+        if body.get("confirmed") is not True:
+            raise ValueError("请核对目标群、学习入口和预览内容，再点击确认学习")
         data = await asyncio.to_thread(
             self._commit, group["scope"], body.get("token"), request.username
         )

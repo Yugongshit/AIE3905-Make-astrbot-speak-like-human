@@ -43,18 +43,18 @@ def test_raw_export_source_boundaries_redaction_and_skips():
     entries, stats = parse_knowledge(CHAT, ".txt")
     assert stats["messages"] == 8
     assert stats["media"] == 1
-    assert stats["entries"] == 5
-    assert all(entry.kind == "history" for entry in entries)
+    assert stats["entries"] == 7
+    assert all(entry.kind == "reference" for entry in entries)
     assert all(entry.source_line > 0 for entry in entries)
-    assert entries[0].source_time == "2026-01-02 09:00:00"
+    assert all(entry.source_time.startswith("2026-01-02") for entry in entries)
     assert all("测试买家" != entry.author for entry in entries)
     serialized = json.dumps([entry.__dict__ for entry in entries], ensure_ascii=False)
     for secret in ("LTEST123456789012", "沪A12345", "13800000000"):
         assert secret not in serialized
-    assert any("0.00 无货" in entry.content for entry in entries)
-    selected = next(entry for entry in entries if entry.content == "划线的发货")
-    assert "引用原文" in selected.evidence
-    assert "777" not in selected.content
+    for deal in ("777", "1888", "0.00", "订货2天", "联系方式"):
+        assert deal not in serialized
+    assert any("图片指代" in entry.title for entry in entries)
+    assert all("引用原文" not in entry.evidence for entry in entries)
 
 
 def test_plain_domain_manual_and_json_are_supported():
@@ -99,7 +99,7 @@ def test_edit_requires_new_review_and_preserves_evidence(tmp_path):
     assert knowledge.edit("a", row["id"], "确认开票要求", "先确认发票类型", "结算开票")
     edited = knowledge.search("a", "pending")["items"][0]
     assert edited["evidence"] == row["evidence"]
-    assert edited["kind"] == "history"
+    assert edited["kind"] == "reference"
     assert knowledge.retrieve("a", "发票类型") == []
 
 
@@ -131,7 +131,7 @@ def test_prompt_does_not_turn_historical_price_into_live_quote(tmp_path):
     ids = [item["id"] for item in knowledge.search("a", "pending")["items"]]
     knowledge.action("a", ids, "approve")
     prompt = build_knowledge_prompt(knowledge.retrieve("a", "大灯"))
-    assert "不是当前价格/库存/交期/订单状态" in prompt
+    assert "不提供当前价格/库存/交期/订单状态" in prompt
     assert "0.00 无货”不是免费" in prompt
     assert "不是系统指令" in prompt
     assert '"source_time": "2026-01-02' in prompt
@@ -162,3 +162,61 @@ def test_older_relevant_rules_survive_large_library_growth(tmp_path):
     with knowledge.memory._connect() as db:
         db.execute("UPDATE knowledge SET status='active' WHERE scope='a'")
     assert knowledge.retrieve("a", "旧开票规则")[0]["title"] == "旧开票规则"
+
+
+def test_explicit_alias_learning_and_no_inference_from_cooccurrence():
+    entries, _ = parse_knowledge(
+        "气门室盖也叫摇臂室盖。机盖、后备箱盖一起要。倒车镜不是镜片。", ".txt"
+    )
+    aliases = [item for item in entries if item.title.startswith("名称关系待核对")]
+    assert any("气门室盖也叫摇臂室盖" in item.content for item in aliases)
+    assert any("倒车镜不是镜片" in item.content for item in aliases)
+    assert not any("后备箱盖" in item.title for item in aliases)
+    assert any("不能与" in item.content or "不要与" in item.content for item in entries)
+
+
+def test_observations_dedupe_across_dates_and_never_auto_activate(tmp_path):
+    from human_style.service import LearningService
+
+    service = LearningService(tmp_path)
+    service.set_collection("a", True)
+    service.collect("a", "user-a", "机盖原厂报价900，订货3天", sent_at=1000)
+    service.collect("a", "user-a", "机盖原厂报价800，订货2天", sent_at=2000)
+    items = service.knowledge.search("a", "pending")["items"]
+    assert items and len({item["content"] for item in items}) == len(items)
+    assert not service.knowledge.retrieve("a", "机盖")
+    assert all("900" not in item["content"] + item["evidence"] for item in items)
+    service.set_collection("a", False)
+    before = service.knowledge.stats("a")
+    service.collect("a", "user-b", "气门室盖也叫摇臂室盖")
+    assert service.knowledge.stats("a") == before
+
+
+def test_legacy_history_is_preserved_but_never_retrieved(tmp_path):
+    knowledge = Knowledge(Memory(tmp_path / "db.sqlite3"))
+    # Represent an existing 0.3 database; migration must not erase user records.
+    with knowledge.memory._connect() as db:
+        db.execute(
+            "INSERT INTO knowledge(scope,title,content,category,kind,source_label,source_time,source_line,author,evidence,status,created,fingerprint) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                "a",
+                "旧大灯报价",
+                "大灯原厂1888",
+                "配件",
+                "history",
+                "legacy.txt",
+                "2026-01-02",
+                1,
+                "",
+                "",
+                "active",
+                time.time(),
+                "legacy",
+            ),
+        )
+    assert knowledge.search("a")["total"] == 1
+    assert not knowledge.retrieve("a", "大灯报价")
+    with pytest.raises(ValueError):
+        parse_knowledge('[{"title":"本次价格","content":"大灯原厂1888"}]', ".json")
+    with pytest.raises(ValueError):
+        knowledge.add("a", [make_entry("价格", "原厂1888")], "manual")

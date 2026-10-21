@@ -1,9 +1,9 @@
 "use strict";
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { groups: [], selected: "", preview: null, page: 1, kPage: 1, tab: "feed", busy: false, connected: false };
+  const state = { groups: [], selected: "", preview: null, file: null, mode: "knowledge", page: 1, kPage: 1, tab: "feed", busy: false, connected: false };
   let bridge, toastTimer, editorTarget, knowledgeEditorTarget;
-  const knowledgeMode = () => $("learning-mode").value === "knowledge";
+  const knowledgeMode = () => state.mode === "knowledge";
   const el = (tag, text, className) => {
     const node = document.createElement(tag);
     if (text !== undefined) node.textContent = text;
@@ -38,8 +38,10 @@
     const noGroup = !current();
     for (const id of ["preview-text", "export", "search-button", "try-button", "sample-status", "search", "try-query", "content", "format", "file"])
       $(id).disabled = state.busy || !state.connected || noGroup;
-    for (const id of ["learning-mode", "knowledge-add", "knowledge-export", "knowledge-status", "knowledge-search", "knowledge-search-button", "knowledge-query", "knowledge-query-button", "knowledge-select-all"])
+    for (const id of ["enter-expression", "enter-environment", "knowledge-add", "knowledge-export", "knowledge-status", "knowledge-search", "knowledge-search-button", "knowledge-query", "knowledge-query-button", "knowledge-select-all"])
       $(id).disabled = state.busy || !state.connected || noGroup;
+    $("preview-file").disabled = state.busy || !state.connected || noGroup || !state.file;
+    $("cancel-upload").disabled = state.busy || !state.connected || !(state.file || state.preview || $("content").value);
     $("commit").disabled = state.busy || !state.connected || !state.preview || noGroup;
     $("prev").disabled = state.busy || !state.connected || state.page <= 1 || noGroup;
     $("next").disabled = state.busy || !state.connected || !state.hasNext || noGroup;
@@ -50,10 +52,10 @@
   }
   function clearPreview() {
     state.preview = null;
-    $("preview").replaceChildren(el("strong", "先给它一些值得学习的话"), el("p", "上传文件或粘贴对话，即可检查解析结果。"));
+    $("preview").replaceChildren(el("strong", "先给它一些值得学习的话"), el("p", "选好文件后点击“预览所选文件”，或粘贴内容后点击预览。"));
     $("preview").className = "empty";
-    $("preview-summary").textContent = knowledgeMode() ? "解析后展示前 5 条知识，确认后进入待审区。" : "解析后会显示前 5 组问答。";
-    $("commit").textContent = knowledgeMode() ? "确认导入待审核知识" : "确认导入所选群";
+    $("preview-summary").textContent = knowledgeMode() ? "预览后展示前 5 条概念，确认后进入待审核区。" : "解析后会显示前 5 组问答。";
+    $("commit").textContent = knowledgeMode() ? "确认学习环境知识" : "确认学习表达方式";
     $("preview-target").textContent = "";
     lockControls();
   }
@@ -66,7 +68,7 @@
     state.preview = { ...data, groupId: state.selected };
     $("preview").className = "";
     $("preview").replaceChildren(...data.examples.map(data.mode === "knowledge" ? (record) => knowledgeCard(record, false) : dialogue));
-    $("preview-summary").textContent = data.mode === "knowledge" ? `识别 ${data.total} 条待审知识。${data.details.format === "chat" ? `原始 ${data.details.messages} 条消息，${data.details.media} 条含媒体占位符（不读取附件内容）。` : "资料片段保留来源，审核后才参与检索。"}` : `识别到 ${data.total} 组问答，展示前 ${Math.min(5, data.total)} 组。`;
+    $("preview-summary").textContent = data.mode === "knowledge" ? `提取 ${data.total} 条待审环境知识，展示前 ${Math.min(5, data.total)} 条。${data.details.format === "chat" ? `共 ${data.details.messages} 条消息；提取可复用概念，不保存原始交易。` : "审核后才参与检索。"}` : `识别到 ${data.total} 组问答，展示前 ${Math.min(5, data.total)} 组。`;
     $("preview-target").textContent = `将导入：${groupName(current())}。重复内容会自动跳过，预览 15 分钟内有效。`;
     lockControls();
   }
@@ -76,7 +78,7 @@
   function renderHistory() {
     if (knowledgeMode()) {
       const counts = current()?.knowledge_counts;
-      $("history").replaceChildren(el("p", counts ? `本群知识：生效 ${counts.active} 条，待审 ${counts.pending} 条。请到“汽配知识库”查看来源和审核。` : "先选择目标群，再导入业务资料。", "subtle"));
+      $("history").replaceChildren(el("p", counts ? `本群知识：生效 ${counts.active} 条，待审 ${counts.pending} 条。请到“工作环境知识库”查看来源和审核。` : "先选择目标群，再导入业务资料。", "subtle"));
       return;
     }
     $("history").replaceChildren(...(current()?.imports || []).map((item) => {
@@ -106,7 +108,7 @@
     const label = el("label", undefined, "switch"), input = el("input");
     input.type = "checkbox";
     input.checked = group[key];
-    const switchName = { collect: "从这个群学习", style: "使用自然表达", knowledge: "使用汽配知识" }[key];
+    const switchName = { collect: "从这个群学习", style: "使用自然表达", knowledge: "使用环境知识" }[key];
     input.setAttribute("aria-label", `${groupName(group)}：${switchName}`);
     if (!group.available || (key === "knowledge" && !group.knowledge_available)) input.dataset.unavailable = "true";
     const caption = el("span", group[key] ? "已开启" : "已关闭");
@@ -132,7 +134,7 @@
       const row = el("tr"), identity = el("td");
       identity.append(el("strong", groupName(group)), el("small", `群 ${group.group_id}`), el("small", `${group.platform_id} · 机器人 ${group.bot_id}`));
       if (!group.available) identity.append(el("small", "受插件总开关或群白名单限制"));
-      else if (!group.knowledge_available) identity.append(el("small", "汽配知识总开关已关闭"));
+      else if (!group.knowledge_available) identity.append(el("small", "环境知识总开关已关闭"));
       row.append(identity);
       for (const key of ["collect", "style", "knowledge"]) { const cell = el("td"); cell.append(makeSwitch(group, key)); row.append(cell); }
       row.append(el("td", `${group.counts.active} / ${group.counts.pending}`));
@@ -168,7 +170,7 @@
       clearPreview();
     }
     $("target").value = state.selected;
-    $("target-hint").textContent = current() && !current().available ? "这个群受插件总开关或白名单限制，开关设置暂不生效。" : "上传的记录只进入所选群的表达库。";
+    $("target-hint").textContent = current() && !current().available ? "这个群受插件总开关或白名单限制，开关设置暂不生效。" : "知识与表达按群保存，不会把其他群的约定套过来。";
     renderHistory(); renderGroups(); lockControls();
   }
   async function loadState(refresh = false) {
@@ -215,14 +217,29 @@
     card.append(head, dialogue(sample), actions);
     return card;
   }
-  async function filePreview(file) {
+  function resetUpload() {
+    state.file = null; $("file").value = ""; $("filename").textContent = "尚未选择文件";
+    $("content").value = ""; clearPreview();
+  }
+  function chooseFile(file) {
     if (!file) return;
-    clearPreview();
+    resetUpload();
     if (!current()) throw new Error("请先选择一个目标群。");
     if (!/\.(json|jsonl|txt|md)$/i.test(file.name)) throw new Error("请选择 JSON、JSONL、TXT 或 Markdown 文件。");
     if (file.size > 2 * 1024 * 1024) throw new Error("单个文件最多 2 MiB。");
-    $("filename").textContent = `${file.name} · ${(file.size / 1024).toFixed(1)} KiB`;
-    showPreview(await bridge.upload(path(knowledgeMode() ? "preview-knowledge-file" : "preview-file"), file));
+    state.file = file;
+    $("filename").textContent = `${file.name} · ${(file.size / 1024).toFixed(1)} KiB · 尚未上传，点击预览继续`;
+    lockControls();
+  }
+  function setMode(mode) {
+    state.mode = mode; resetUpload();
+    for (const [id, value] of [["enter-expression", "expression"], ["enter-environment", "knowledge"]]) {
+      $(id).classList.toggle("selected", mode === value); $(id).setAttribute("aria-pressed", String(mode === value));
+    }
+    $("feed-title").textContent = knowledgeMode() ? "熟悉工作环境" : "教它怎么说话";
+    $("mode-help").textContent = knowledgeMode() ? "学习术语、部件区别与工作流程，过滤具体交易金额和客户信息。提取结果需审核。" : "投喂整理好的优质问答，只学习措辞与语气，不把样例中的业务内容当成事实。";
+    $("content").placeholder = knowledgeMode() ? "2026-01-02 09:00:00 群成员\n发动机盖也叫机盖，倒车镜要区分总成和镜片。" : "问：谢谢，解决了。\n答：解决了就好，后面有问题再喊我。";
+    renderHistory();
   }
   document.querySelectorAll(".tab").forEach((node) => node.addEventListener("click", () => {
     state.tab = node.dataset.tab;
@@ -233,28 +250,37 @@
   }));
   $("target").addEventListener("change", () => {
     state.selected = $("target").value; state.page = 1; state.kPage = 1;
-    clearPreview(); renderHistory(); $("try-results").replaceChildren(); $("filename").textContent = "尚未选择文件"; $("file").value = "";
+    resetUpload(); renderHistory(); $("try-results").replaceChildren();
     renderState(); if (state.tab === "library") run(loadSamples); if (state.tab === "knowledge") run(loadKnowledge);
     $("knowledge-results").replaceChildren();
   });
-  $("file").addEventListener("change", () => run(() => filePreview($("file").files[0])));
+  $("file").addEventListener("change", () => run(async () => chooseFile($("file").files[0])));
+  $("preview-file").addEventListener("click", () => run(async () => {
+    if (!state.file) throw new Error("请先选择文件");
+    clearPreview();
+    showPreview(await bridge.upload(path(knowledgeMode() ? "preview-knowledge-file" : "preview-file"), state.file));
+  }));
+  $("cancel-upload").addEventListener("click", resetUpload);
   const drop = $("dropzone");
   drop.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); if (!$("file").disabled) $("file").click(); } });
   for (const name of ["dragover", "dragleave", "drop"]) drop.addEventListener(name, (event) => {
     event.preventDefault(); drop.classList.toggle("dragover", name === "dragover");
-    if (name === "drop" && state.connected) run(() => filePreview(event.dataTransfer.files[0]));
+    if (name === "drop" && state.connected) run(async () => chooseFile(event.dataTransfer.files[0]));
   });
   $("preview-text").addEventListener("click", () => run(async () => {
     clearPreview(); showPreview(await bridge.apiPost(path(knowledgeMode() ? "preview-knowledge-text" : "preview-text"), { content: $("content").value, format: $("format").value }));
   }));
   $("content").addEventListener("input", clearPreview);
   $("format").addEventListener("change", clearPreview);
-  $("learning-mode").addEventListener("change", () => { clearPreview(); renderHistory(); });
+  $("enter-expression").addEventListener("click", () => setMode("expression"));
+  $("enter-environment").addEventListener("click", () => setMode("knowledge"));
   $("commit").addEventListener("click", () => run(async () => {
     if (!state.preview || state.preview.groupId !== state.selected) throw new Error("目标群已改变，请重新预览。");
-    const mode = state.preview.mode;
-    const result = await bridge.apiPost(path("commit"), { token: state.preview.token });
-    clearPreview(); await loadState(); notify(`导入完成：新增 ${result.added} 条${mode === "knowledge" ? "待审知识，请到汽配知识库审核" : "表达"}，跳过重复 ${result.duplicates} 条。`);
+    const preview = state.preview, mode = preview.mode;
+    const confirmation = await ask("确认开始学习？", `目标群：${groupName(current())}；入口：${mode === "knowledge" ? "熟悉工作环境" : "教它怎么说话"}；文件：${preview.label}；共 ${preview.total} 条。${mode === "knowledge" ? "确认后进入待审核区，审核通过才会使用。" : "确认后这些表达样例将用于回复参考。"}传错了请取消并更换文件。`);
+    if (!confirmation.confirmed) return;
+    const result = await bridge.apiPost(path("commit"), { token: preview.token, confirmed: true });
+    resetUpload(); await loadState(); notify(`导入完成：新增 ${result.added} 条${mode === "knowledge" ? "待审知识，请到工作环境知识库审核" : "表达"}，跳过重复 ${result.duplicates} 条。`);
   }));
   $("refresh").addEventListener("click", () => run(async () => { await loadState(true); if (state.tab === "library") await loadSamples(); if (state.tab === "knowledge") await loadKnowledge(); }));
   $("template").addEventListener("click", () => run(() => bridge.download("panel/template", { mode: knowledgeMode() ? "knowledge" : "expression" }, knowledgeMode() ? "auto-parts-knowledge.json" : "dialogues.json")));
@@ -288,24 +314,24 @@
   function knowledgeCard(record, editable = true) {
     const card = el("article", undefined, "sample"), heading = el("div", undefined, "knowledge-heading");
     if (editable) {
-      const select = el("input"); select.type = "checkbox"; select.value = String(record.id); select.className = "knowledge-check";
+      const select = el("input"); select.type = "checkbox"; select.value = String(record.id); select.className = "knowledge-check"; select.disabled = record.kind === "history"; if (record.kind === "history") select.dataset.unavailable = "true";
       select.setAttribute("aria-label", `选择知识 ${record.id}`); select.addEventListener("change", knowledgeSelection); heading.append(select);
     }
     heading.append(el("h3", record.title));
-    card.append(heading, el("p", `${record.category} · ${{history:"历史记录",reference:"参考资料",rule:"群内业务约定"}[record.kind] || record.kind}`, "knowledge-source"));
-    if (record.kind === "history") card.append(el("p", "历史信息，不代表当前报价、库存或交期。", "knowledge-history"));
+    card.append(heading, el("p", `${record.category} · ${{history:"旧版交易片段（不参与检索）",reference:"环境参考知识",rule:"本群沟通约定"}[record.kind] || record.kind}`, "knowledge-source"));
+    if (record.kind === "history") card.append(el("p", "旧版内容保留供查看，已停止用于回复。请重新投喂以提取环境概念。", "knowledge-history"));
     card.append(el("p", record.content, "knowledge-body"));
-    const source = [record.source_label || state.preview?.label || "上传资料", record.source_time || "时间未标注", record.source_line ? `第 ${record.source_line} 行` : "", record.author || ""].filter(Boolean).join(" · ");
+    const source = [record.source_label || state.preview?.label || "上传资料", record.source_time || "观察时间未标注", record.source_line ? `第 ${record.source_line} 行` : "", record.author || ""].filter(Boolean).join(" · ");
     card.append(el("p", source, "knowledge-source"));
     if (record.expires) card.append(el("p", `有效期至 ${date(record.expires)}${record.expires < Date.now()/1000 ? "（已过期，不参与检索）" : ""}`, "knowledge-source"));
     if (record.evidence) {
-      const evidence = el("details", undefined, "knowledge-evidence"); evidence.append(el("summary", "查看原始来源片段"), el("p", record.evidence)); card.append(evidence);
+      const evidence = el("details", undefined, "knowledge-evidence"); evidence.append(el("summary", "查看提取依据"), el("p", record.evidence)); card.append(evidence);
     }
     if (editable) {
       const actions = el("div", undefined, "sample-actions");
-      if (record.status === "pending") actions.append(button("审核采纳", () => changeKnowledge("approve", [record.id]), ""));
+      if (record.status === "pending" && record.kind !== "history") actions.append(button("审核采纳", () => changeKnowledge("approve", [record.id]), ""));
       if (record.status === "active") actions.append(button("停用", () => changeKnowledge("disable", [record.id])));
-      if (record.status === "disabled") actions.append(button("恢复参考", () => changeKnowledge("restore", [record.id])));
+      if (record.status === "disabled" && record.kind !== "history") actions.append(button("恢复参考", () => changeKnowledge("restore", [record.id])));
       actions.append(button("修改", async () => openKnowledgeEditor(record)));
       actions.append(button("删除", async () => {
         const result = await ask("删除这条知识？", "删除后不再检索，原始来源片段也会从该条目中移除。");
@@ -326,7 +352,7 @@
   }
   async function changeKnowledge(action, ids) {
     await bridge.apiPost(path("knowledge-action"), { action, ids });
-    await loadState(); await loadKnowledge(); notify("知识库已更新；历史信息仍保留历史类型。");
+    await loadState(); await loadKnowledge(); notify("环境知识库已更新。");
   }
   function openKnowledgeEditor(record) {
     knowledgeEditorTarget = { id: record?.id, groupId: state.selected };
@@ -345,10 +371,10 @@
   $("knowledge-search").addEventListener("keydown", (event) => { if (event.key === "Enter") { state.kPage = 1; run(loadKnowledge); } });
   $("knowledge-prev").addEventListener("click", () => { if (state.kPage > 1) { state.kPage--; run(loadKnowledge); } });
   $("knowledge-next").addEventListener("click", () => { if (state.kNext) { state.kPage++; run(loadKnowledge); } });
-  $("knowledge-select-all").addEventListener("change", () => { document.querySelectorAll(".knowledge-check").forEach((input) => { input.checked = $("knowledge-select-all").checked; }); knowledgeSelection(); });
+  $("knowledge-select-all").addEventListener("change", () => { document.querySelectorAll(".knowledge-check").forEach((input) => { if (!input.disabled) input.checked = $("knowledge-select-all").checked; }); knowledgeSelection(); });
   $("knowledge-approve-selected").addEventListener("click", () => run(async () => {
     const ids = knowledgeSelection(); if (!ids.length) return;
-    const result = await ask("审核采纳所选知识？", `将采纳 ${ids.length} 条，确认内容准确且适合当前群。历史报价和库存仍只能作为历史记录参考。`);
+    const result = await ask("审核采纳所选知识？", `将采纳 ${ids.length} 条，确认内容准确且适合当前群。请核对别名关系、部件区别和场景说明。`);
     if (result.confirmed) await changeKnowledge("approve", ids);
   }));
   $("knowledge-add").addEventListener("click", () => run(async () => openKnowledgeEditor(null)));
@@ -382,6 +408,7 @@
       try { await Promise.race([bridge.ready(), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("面板连接超时，请从 AstrBot 插件可视化视图重新打开。")), 12000); })]); }
       finally { clearTimeout(timer); }
       state.connected = true;
+      setMode(state.mode);
       await run(async () => { await loadState(); await loadState(true); });
     } catch (error) {
       $("notice").className = "notice error"; $("notice").textContent = error.message;

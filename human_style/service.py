@@ -1,13 +1,11 @@
 """The ingestion entry point can also be used by future UIs or adapters."""
 
-import re
 import threading
 import time
 from collections import OrderedDict
-from datetime import datetime, timezone
 from pathlib import Path
 
-from .knowledge import CATEGORIES, PARTS, Knowledge, make_entry
+from .knowledge import Knowledge, extract_environment
 from .memory import Memory
 from .records import make_example, read_records
 
@@ -49,19 +47,9 @@ class LearningService:
         now = time.monotonic()
         if not sender or not 4 <= len(text.strip()) <= 1000 or text.startswith("/"):
             return 0
-        if PARTS.search(text) or any(re.search(pattern, text, re.I) for _, pattern in CATEGORIES):
-            entry = make_entry(
-                "群聊业务片段 · " + text.splitlines()[0][:70],
-                text,
-                "群聊业务",
-                "history",
-                source_time=datetime.fromtimestamp(
-                    sent_at if isinstance(sent_at, (int, float)) else time.time(), timezone.utc
-                ).isoformat(timespec="seconds"),
-                author="群成员",
-                evidence=text,
-            )
-            self.knowledge.add(scope, [entry], "群聊新消息")
+        entries = extract_environment(text)
+        if entries:
+            self.knowledge.add(scope, entries, "群聊观察：待审核概念")
         with self._lock:
             previous = self._previous.pop(scope, None)
             self._previous[scope] = (sender, text, now)

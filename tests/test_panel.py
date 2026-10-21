@@ -58,7 +58,9 @@ def test_preview_confirm_idempotence_and_group_isolation(panel):
     assert data(client.get(f"{BASE}/groups/{a}/samples", headers=headers()))["total"] == 0
     assert (
         client.post(
-            f"{BASE}/groups/{b}/commit", headers=headers(), json={"token": parsed["token"]}
+            f"{BASE}/groups/{b}/commit",
+            headers=headers(),
+            json={"confirmed": True, "token": parsed["token"]},
         ).status_code
         == 400
     )
@@ -66,17 +68,23 @@ def test_preview_confirm_idempotence_and_group_isolation(panel):
         client.post(
             f"{BASE}/groups/{a}/commit",
             headers=headers("other-admin"),
-            json={"token": parsed["token"]},
+            json={"confirmed": True, "token": parsed["token"]},
         ).status_code
         == 400
     )
     added = data(
-        client.post(f"{BASE}/groups/{a}/commit", headers=headers(), json={"token": parsed["token"]})
+        client.post(
+            f"{BASE}/groups/{a}/commit",
+            headers=headers(),
+            json={"confirmed": True, "token": parsed["token"]},
+        )
     )
     assert added == {"added": 1, "duplicates": 0}
     assert (
         client.post(
-            f"{BASE}/groups/{a}/commit", headers=headers(), json={"token": parsed["token"]}
+            f"{BASE}/groups/{a}/commit",
+            headers=headers(),
+            json={"confirmed": True, "token": parsed["token"]},
         ).status_code
         == 400
     )
@@ -85,7 +93,9 @@ def test_preview_confirm_idempotence_and_group_isolation(panel):
     assert (
         data(
             client.post(
-                f"{BASE}/groups/{a}/commit", headers=headers(), json={"token": again["token"]}
+                f"{BASE}/groups/{a}/commit",
+                headers=headers(),
+                json={"confirmed": True, "token": again["token"]},
             )
         )["duplicates"]
         == 1
@@ -198,7 +208,11 @@ def test_edit_approve_export_search_and_history(panel, plugin):
     assert data(client.get(f"{BASE}/groups/{a}/samples", headers=headers()))["total"] == 0
     parsed = preview(panel, a)
     data(
-        client.post(f"{BASE}/groups/{a}/commit", headers=headers(), json={"token": parsed["token"]})
+        client.post(
+            f"{BASE}/groups/{a}/commit",
+            headers=headers(),
+            json={"confirmed": True, "token": parsed["token"]},
+        )
     )
     group = next(
         g for g in data(client.get(BASE + "/state", headers=headers()))["groups"] if g["id"] == a
@@ -220,7 +234,7 @@ def test_settings_validation_alias_and_preview_expiry(panel, plugin):
     plugin.panel._previews[token] = (0, *old[1:])
     assert (
         client.post(
-            f"{BASE}/groups/{a}/commit", headers=headers(), json={"token": token}
+            f"{BASE}/groups/{a}/commit", headers=headers(), json={"confirmed": True, "token": token}
         ).status_code
         == 400
     )
@@ -254,7 +268,7 @@ async def test_real_plugin_view_discovery_and_authenticated_assets(panel):
     )
     page = client.get(entry["content_path"])
     assert page.status_code == 200
-    assert "投喂聊天记录" in page.text
+    assert "熟悉工作环境" in page.text
     assert "asset_token=" in page.text
     root = entry["content_path"].rsplit("/", 1)[0] + "/"
     assert client.get(root + "app.js").status_code == 200
@@ -339,21 +353,27 @@ async def test_raw_chat_upload_review_and_real_model_context(panel, plugin, sdk)
     )
     assert parsed["mode"] == "knowledge"
     assert parsed["details"]["messages"] == 8
-    assert parsed["total"] == 5
+    assert parsed["total"] == 7
     assert plugin.learning.knowledge.stats(plugin.learning.memory.group(a)["scope"])["pending"] == 0
     assert (
         client.post(
-            f"{BASE}/groups/{b}/commit", headers=headers(), json={"token": parsed["token"]}
+            f"{BASE}/groups/{b}/commit",
+            headers=headers(),
+            json={"confirmed": True, "token": parsed["token"]},
         ).status_code
         == 400
     )
     data(
-        client.post(f"{BASE}/groups/{a}/commit", headers=headers(), json={"token": parsed["token"]})
+        client.post(
+            f"{BASE}/groups/{a}/commit",
+            headers=headers(),
+            json={"confirmed": True, "token": parsed["token"]},
+        )
     )
     items = data(client.get(f"{BASE}/groups/{a}/knowledge?status=pending", headers=headers()))[
         "items"
     ]
-    assert len(items) == 5
+    assert len(items) == 7
     target = plugin.learning.memory.group(a)
     event = sdk.Event("右前大灯多少钱", group=target["group_id"])
     request = sdk.Request(model="deepseekprov4")
@@ -376,8 +396,9 @@ async def test_raw_chat_upload_review_and_real_model_context(panel, plugin, sdk)
     )
     request = sdk.Request(model="deepseekprov4")
     await plugin.style_request(event, request)
-    assert "1888" in request.system_prompt
-    assert "不是当前价格/库存/交期/订单状态" in request.system_prompt
+    assert "1888" not in request.system_prompt
+    assert "灯具总成" in request.system_prompt
+    assert "不提供当前价格/库存/交期/订单状态" in request.system_prompt
     assert request.model == "deepseekprov4"
     assert "LTEST123456789012" not in request.system_prompt
     data(client.post(f"{BASE}/groups/{a}/settings", headers=headers(), json={"knowledge": False}))
@@ -436,3 +457,27 @@ def test_manual_rule_edit_requires_review_and_template_roundtrip(panel):
     from human_style.knowledge import parse_knowledge
 
     assert parse_knowledge(template.text, ".json")[0]
+
+
+def test_commit_requires_explicit_confirmation_without_consuming_preview(panel):
+    client, headers, _ = panel
+    a, _ = group_ids(panel)
+    parsed = preview(panel, a)
+    for confirmed in (None, False, "true", 1):
+        response = client.post(
+            f"{BASE}/groups/{a}/commit",
+            headers=headers(),
+            json={"token": parsed["token"], "confirmed": confirmed},
+        )
+        assert response.status_code == 400
+        assert data(client.get(f"{BASE}/groups/{a}/samples", headers=headers()))["total"] == 0
+    assert (
+        data(
+            client.post(
+                f"{BASE}/groups/{a}/commit",
+                headers=headers(),
+                json={"token": parsed["token"], "confirmed": True},
+            )
+        )["added"]
+        == 1
+    )
